@@ -12,21 +12,69 @@
 
     <!-- ===== タイトル画面 ===== -->
     <div id="title-screen" class="screen active">
-      <div class="neon-box">
-        <p class="subtitle">AIアイドル</p>
-        <h1 class="title">みうの<br>ブロック崩し</h1>
-        <p class="hint">ステージを選んでスタート</p>
+      <div class="title-layout">
+        <img src="tital.png" alt="みうのブロック崩し" class="title-bg-img">
 
-        <div class="stage-select-area">
-          <p class="stage-select-label">解放ステージ <span id="unlocked-stage-text">1</span> / <span id="total-stage-text">20</span></p>
-          <div id="stage-select-grid" class="stage-grid"></div>
+        <div class="title-overlay">
+          <header class="title-header">
+            <p class="title-header-sub">みうの</p>
+            <h1 class="title-header-main" aria-label="みうのブロック崩し">
+              <span class="title-header-line">ブロック</span>
+              <span class="title-header-line">崩し</span>
+            </h1>
+            <p class="title-header-en"><span class="title-heart">♥</span> MIU BLOCK BREAKER <span class="title-heart">♥</span></p>
+            <p class="title-header-tagline">☆ 弾いて！壊して！ハイスコアを目指そう！ ☆</p>
+          </header>
+
+          <div class="title-bottom">
+          <div id="stage-panel" class="stage-panel hidden">
+            <div class="stage-panel-header">
+              <p class="stage-panel-title">STAGE SELECT</p>
+              <button id="stage-panel-close" class="stage-panel-close" aria-label="閉じる">✕</button>
+            </div>
+            <p class="stage-rank-line">HIGH SCORE <span id="title-high-score">0</span></p>
+            <p class="stage-select-label">解放 <span id="unlocked-stage-text">1</span> / <span id="total-stage-text">24</span></p>
+            <div id="stage-select-grid" class="stage-grid"></div>
+            <button id="start-continue-btn" class="neon-btn secondary stage-continue-btn">解放ステージから</button>
+          </div>
+
+          <div class="title-action-bar">
+            <div class="title-side-btns title-side-left">
+              <button id="stage-toggle-btn" class="title-square-btn purple" type="button">
+                <span class="title-square-icon">🎯</span>
+                <span class="title-square-label">STAGE</span>
+              </button>
+              <button id="save-btn" class="title-square-btn purple" type="button">
+                <span class="title-square-icon">💾</span>
+                <span class="title-square-label">SAVE</span>
+              </button>
+            </div>
+
+            <button id="start-btn" class="title-start-btn" type="button">
+              <span class="title-start-hearts">♥</span>
+              START
+              <span class="title-start-hearts">♥</span>
+            </button>
+
+            <div class="title-side-btns title-side-right">
+              <button id="sound-btn-title" class="title-square-btn cyan sound-toggle" type="button" aria-label="BGM切替">
+                <span class="title-square-icon">🎵</span>
+                <span class="title-square-label sound-label-bgm">BGM ON</span>
+              </button>
+              <button id="sound-btn-title-se" class="title-square-btn cyan sound-toggle" type="button" aria-label="効果音切替">
+                <span class="title-square-icon">🔊</span>
+                <span class="title-square-label sound-label-se">SE ON</span>
+              </button>
+            </div>
+          </div>
+
+          <p class="title-stage-footer">☆ ステージ <span id="title-selected-stage">1</span> ☆</p>
+          <button id="start-begin-btn" class="title-sub-link" type="button">はじめから（ステージ1）</button>
+          <p id="save-status" class="save-status title-save-status">セーブデータを読み込み中…</p>
+          </div>
         </div>
-
-        <button id="start-btn" class="neon-btn">スタート</button>
-        <button id="start-begin-btn" class="neon-btn secondary">はじめから（ステージ1）</button>
-        <button id="start-continue-btn" class="neon-btn secondary">解放ステージから</button>
-        <button id="sound-btn-title" class="sound-toggle" aria-label="サウンド切替">🔊 ON</button>
       </div>
+      <div id="save-toast" class="save-toast hidden">セーブしました！</div>
     </div>
 
     <!-- ===== ゲーム画面 ===== -->
@@ -57,11 +105,15 @@
         <button id="btn-left" class="control-btn" aria-label="左に移動">
           <span class="btn-icon">◀</span>
         </button>
+        <button id="btn-charge" class="control-btn charge-btn" aria-label="チャージショット">
+          <span class="charge-label">CHARGE</span>
+          <span class="charge-sub">長押し→離す</span>
+        </button>
         <button id="btn-right" class="control-btn" aria-label="右に移動">
           <span class="btn-icon">▶</span>
         </button>
       </div>
-      <p class="control-hint">スワイプで移動 / 長押しでチャージ → ボールが来たら離す！</p>
+      <p class="control-hint">◀ ▶ で移動 / CHARGE長押し → ボールが来たら離してショット！</p>
     </div>
 
     <!-- ===== ゲームオーバー画面 ===== -->
@@ -71,6 +123,7 @@
         <p class="result-score">SCORE: <span id="final-score-over">0</span></p>
         <p class="result-sub">STAGE <span id="final-stage-over">1</span></p>
         <button id="retry-btn-over" class="neon-btn">リトライ</button>
+        <button id="save-btn-over" class="neon-btn secondary">💾 セーブ</button>
         <button id="title-btn-over" class="neon-btn secondary">タイトルへ</button>
       </div>
     </div>
@@ -96,6 +149,7 @@
         </div>
 
         <button id="retry-btn-clear" class="neon-btn">もう一度</button>
+        <button id="save-btn-clear" class="neon-btn secondary">💾 セーブ</button>
         <button id="title-btn-clear" class="neon-btn secondary">タイトルへ</button>
       </div>
     </div>

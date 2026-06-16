@@ -23,12 +23,15 @@ const CONFIG = {
   itemFallSpeed: 2.8,
   itemSize: 22,
   itemDropChance: 0.18,     // アイテム落下率（やや低め）
+  laserDropChance: 0.06,    // 落下アイテムがレーザーになる確率（他は均等）
   laserWidth: 4,
   laserSpeed: 10,
   laserDuration: 7000,
   laserFireInterval: 280,
   widePaddleScale: 1.45,
   wideDuration: 9000,
+  speedBoostMultiplier: 1.75,  // パドル移動速度アップ倍率
+  speedBoostDuration: 10000,   // 持続時間(ms)
   pierceDuration: 8000,     // 貫通ボールの持続時間(ms)
   moveStep: 3,                // 1フレームの移動を分割（貫通防止）
   stageClearDelay: 1800,
@@ -38,8 +41,48 @@ const CONFIG = {
   chargeSpeedBoost: 1.6,     // 満タン時の速度倍率（+160%）
   chargeReleaseBonus: 1.25,  // 離したタイミングで当てたボーナス
   chargeReleaseWindow: 700,  // 離してから有効なミリ秒
+  chargeDecayPerPaddle: 0.82, // 通常返し1回ごとに余剰速度が18%減
+  chargeDecayPerFrame: 0.9992, // 飛行中もわずかに減衰（1=減衰なし）
+  chargeBreakCount: 2,       // チャージショットで貫通して壊せるブロック数
   maxBallSpeed: 11,
+  // ボス戦
+  bossDefeatDelay: 2400,
+  bossBlockOffsetY: 54,
+  paddleInvincibleTime: 1400,
 };
+
+// ボス出現ステージ（1始まり）と段階別ステータス
+const BOSS_STAGE_NUMBERS = [5, 10, 15, 20, 24];
+const BOSS_STAGES = BOSS_STAGE_NUMBERS.map((n) => n - 1);
+const BOSS_NAMES = ["みう", "みう Mk-II", "みう MAX", "みう GOD", "真・みう"];
+
+function getBossTier(stage = currentStage) {
+  const tier = BOSS_STAGES.indexOf(stage);
+  return tier >= 0 ? tier : 0;
+}
+
+function getBossConfig(tier = getBossTier()) {
+  return {
+    tier,
+    name: BOSS_NAMES[tier] || BOSS_NAMES[BOSS_NAMES.length - 1],
+    hp: 38 + tier * 22,
+    width: 70 + tier * 6,
+    height: 40 + tier * 5,
+    speed: 1.7 + tier * 0.45,
+    shootInterval: Math.max(850, 1750 - tier * 160),
+    bulletSpeed: 3.4 + tier * 0.5,
+    bulletRadius: 4.5 + tier * 0.55,
+    ballDamage: 1 + Math.floor(tier / 2),
+    chargeDamage: 2 + Math.floor(tier / 2),
+    angryThreshold: Math.max(0.25, 0.48 - tier * 0.05),
+    angrySpread: 2 + tier,
+    angrySpeedMult: 1.12 + tier * 0.05,
+    angryIntervalMult: Math.max(0.55, 0.78 - tier * 0.04),
+    blockRowsMax: Math.max(3, 5 - Math.floor(tier / 2)),
+    laserHitCooldown: Math.max(100, 200 - tier * 22),
+    glowColor: ["#b967ff", "#00f5ff", "#ff6ec7", "#ffe066", "#ff3344"][tier],
+  };
+}
 
 // ステージ定義（layout: ブロック並び / ステージ4以降で変化）
 const STAGES = [
@@ -66,6 +109,11 @@ const STAGES = [
   { rows: 11, cols: 10, ballSpeed: 7.7, dropRate: 0.21, layout: "diamond" },
   { rows: 12, cols: 10, ballSpeed: 7.9, dropRate: 0.21, layout: "fortress" },
   { rows: 12, cols: 10, ballSpeed: 8.2, dropRate: 0.21, layout: "scatter" },
+  // ステージ21〜23：ラストスパート
+  { rows: 12, cols: 10, ballSpeed: 8.4, dropRate: 0.21, layout: "wall" },
+  { rows: 12, cols: 10, ballSpeed: 8.6, dropRate: 0.22, layout: "gates" },
+  { rows: 13, cols: 10, ballSpeed: 8.9, dropRate: 0.22, layout: "fortress" },
+  { rows: 13, cols: 10, ballSpeed: 9.2, dropRate: 0.22, layout: "scatter" },
 ];
 
 // ブロックの並びパターン（true = ブロックを置く）
@@ -104,6 +152,9 @@ function getBlockHp(row, col) {
   if (currentStage >= 9 && row === 0) hp = 2;
   if (currentStage >= 12 && row <= 2 && col % 4 === 0) hp = 3;
   if (currentStage >= 16 && row <= 1 && col % 2 === 1) hp = 3;
+  if (currentStage >= 19 && row <= 1) hp = Math.max(hp, 2);
+  if (currentStage >= 21 && row === 0) hp = Math.max(hp, 3);
+  if (currentStage >= 22 && row <= 2) hp = Math.max(hp, 2);
   return hp;
 }
 
@@ -129,6 +180,10 @@ const STAGE_BG = [
   { name: "ギャラクシー",    bgTint: "rgba(80, 40, 200, 0.05)" },
   { name: "プリンセス",      bgTint: "rgba(255, 150, 220, 0.04)" },
   { name: "ファイナル",      bgTint: "rgba(255, 200, 100, 0.05)" },
+  { name: "エクストリーム",  bgTint: "rgba(255, 80, 120, 0.05)" },
+  { name: "インフィニティ",  bgTint: "rgba(100, 80, 255, 0.05)" },
+  { name: "真・ファイナル",  bgTint: "rgba(255, 220, 80, 0.06)" },
+  { name: "ラストボス",      bgTint: "rgba(255, 60, 150, 0.06)" },
 ];
 
 // 列ごとのネオンカラー（左から順にこの色が繰り返る）
@@ -149,6 +204,35 @@ function getStageBg() {
   return STAGE_BG[Math.min(currentStage, STAGE_BG.length - 1)];
 }
 
+const STAGE_BG_IMAGE_COUNT = 24;
+const stageBgImages = new Array(STAGE_BG_IMAGE_COUNT);
+
+function preloadStageBgImages() {
+  for (let i = 1; i <= STAGE_BG_IMAGE_COUNT; i++) {
+    const img = new Image();
+    img.decoding = "async";
+    img.src = `${i}.jpg`;
+    stageBgImages[i - 1] = img;
+  }
+}
+
+function getStageBgImage() {
+  const idx = Math.min(currentStage, STAGE_BG_IMAGE_COUNT - 1);
+  const img = stageBgImages[idx];
+  return img && img.complete && img.naturalWidth > 0 ? img : null;
+}
+
+function drawCoverImage(img) {
+  const cw = canvas.width;
+  const ch = canvas.height;
+  const iw = img.naturalWidth;
+  const ih = img.naturalHeight;
+  const scale = Math.max(cw / iw, ch / ih);
+  const dw = iw * scale;
+  const dh = ih * scale;
+  ctx.drawImage(img, (cw - dw) / 2, (ch - dh) / 2, dw, dh);
+}
+
 function getColumnColor(col) {
   return COLUMN_NEON_COLORS[col % COLUMN_NEON_COLORS.length];
 }
@@ -158,29 +242,75 @@ function getColumnColor(col) {
    ============================================================ */
 
 const SAVE_KEY = "miu-block-breaker-save";
+const SAVE_VERSION = 1;
 
 const Save = {
-  data: { unlockedStage: 0, allClear: false },
+  data: {
+    version: SAVE_VERSION,
+    unlockedStage: 0,
+    allClear: false,
+    highScore: 0,
+    savedAt: null,
+  },
+  sessionDirty: false,
+
+  defaultData() {
+    return {
+      version: SAVE_VERSION,
+      unlockedStage: 0,
+      allClear: false,
+      highScore: 0,
+      savedAt: null,
+    };
+  },
 
   load() {
     try {
       const raw = localStorage.getItem(SAVE_KEY);
-      if (raw) this.data = { ...this.data, ...JSON.parse(raw) };
-    } catch (e) { /* 読み込み失敗時は初期値 */ }
+      if (raw) {
+        const parsed = JSON.parse(raw);
+        this.data = { ...this.defaultData(), ...parsed };
+        this.sessionDirty = false;
+      } else {
+        this.data = this.defaultData();
+        this.sessionDirty = false;
+      }
+    } catch (e) {
+      this.data = this.defaultData();
+    }
     this.data.unlockedStage = Math.max(0, Math.min(this.data.unlockedStage, STAGES.length - 1));
+    return this.hasSavedData();
   },
 
-  save() {
+  hasSavedData() {
+    return this.data.savedAt !== null;
+  },
+
+  save(isManual = false) {
     try {
+      this.data.version = SAVE_VERSION;
+      this.data.savedAt = Date.now();
       localStorage.setItem(SAVE_KEY, JSON.stringify(this.data));
-    } catch (e) { /* 保存失敗時は無視 */ }
+      this.sessionDirty = false;
+      this.updateStatusUI();
+      if (isManual) this.showToast("セーブしました！");
+      return true;
+    } catch (e) {
+      if (isManual) this.showToast("セーブに失敗しました");
+      return false;
+    }
+  },
+
+  markDirty() {
+    this.sessionDirty = true;
+    this.updateStatusUI();
   },
 
   unlockStage(stageIndex) {
     const next = Math.max(0, Math.min(stageIndex, STAGES.length - 1));
     if (next > this.data.unlockedStage) {
       this.data.unlockedStage = next;
-      this.save();
+      this.markDirty();
     }
   },
 
@@ -191,7 +321,50 @@ const Save = {
     } else {
       this.unlockStage(clearedIndex + 1);
     }
-    this.save();
+    this.save(false);
+  },
+
+  recordHighScore(score) {
+    if (score > this.data.highScore) {
+      this.data.highScore = score;
+      this.markDirty();
+    }
+  },
+
+  formatSavedAt() {
+    if (!this.data.savedAt) return null;
+    const d = new Date(this.data.savedAt);
+    const pad = (n) => String(n).padStart(2, "0");
+    return `${d.getMonth() + 1}/${d.getDate()} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
+  },
+
+  updateStatusUI() {
+    const el = document.getElementById("save-status");
+    if (!el) return;
+
+    if (this.sessionDirty) {
+      el.textContent = "⚠ 未セーブの進行があります（セーブボタンを押してください）";
+      el.className = "save-status unsaved";
+    } else if (this.hasSavedData()) {
+      const hi = this.data.highScore > 0 ? ` / ハイスコア ${this.data.highScore}` : "";
+      el.textContent = `💾 最終セーブ: ${this.formatSavedAt()}${hi}`;
+      el.className = "save-status saved";
+    } else {
+      el.textContent = "⚠ 未セーブです（ステージ解放はセーブ後に保持されます）";
+      el.className = "save-status unsaved";
+    }
+  },
+
+  showToast(message) {
+    const toast = document.getElementById("save-toast");
+    if (!toast) return;
+    toast.textContent = message;
+    toast.classList.remove("hidden");
+    toast.style.animation = "none";
+    void toast.offsetWidth;
+    toast.style.animation = "";
+    clearTimeout(Save._toastTimer);
+    Save._toastTimer = setTimeout(() => toast.classList.add("hidden"), 2000);
   },
 };
 
@@ -202,6 +375,7 @@ const ITEM_TYPES = {
   MULTI:  { label: "M", color: "#ffe066", glow: "#fff099" },  // ボール増殖
   LASER:  { label: "L", color: "#00f5ff", glow: "#80ffff" },  // レーザー
   WIDE:   { label: "W", color: "#b967ff", glow: "#d4a0ff" },  // パドル拡大
+  SPEED:  { label: "S", color: "#50ffbb", glow: "#a0ffd8" },  // パドル高速
   PIERCE: { label: "P", color: "#ff3344", glow: "#ff6b6b" },  // 貫通ボール
 };
 
@@ -286,6 +460,9 @@ const Sound = {
   comboHit(n)   { this.play(400 + n * 40, 0.1, "triangle", 0.1); },
   laserShoot()  { this.play(900, 0.05, "sawtooth", 0.06); },
   stageClear()  { this.play(523, 0.2); setTimeout(() => this.play(659, 0.2), 150); setTimeout(() => this.play(784, 0.3), 300); },
+  bossHit()     { this.play(280, 0.06, "square", 0.1); this.play(440, 0.08, "sawtooth", 0.08); },
+  bossDefeat()  { this.play(330, 0.12, "sine", 0.12); setTimeout(() => this.play(494, 0.15), 100); setTimeout(() => this.play(659, 0.2), 220); setTimeout(() => this.play(880, 0.35), 380); },
+  bossHurt()    { this.play(150, 0.15, "sawtooth", 0.1); },
   gameOver()    { this.play(200, 0.4, "sawtooth", 0.12); },
   allClear()    { this.play(523, 0.15); setTimeout(() => this.play(659, 0.15), 120); setTimeout(() => this.play(784, 0.15), 240); setTimeout(() => this.play(1047, 0.4), 360); },
 };
@@ -296,11 +473,15 @@ function updateSoundButtons() {
   document.querySelectorAll(".sound-toggle").forEach((btn) => {
     if (btn.classList.contains("mini")) {
       btn.textContent = mini;
-    } else {
+    } else if (btn.id !== "sound-btn-title" && btn.id !== "sound-btn-title-se") {
       btn.textContent = label;
     }
     btn.classList.toggle("off", !Sound.enabled);
   });
+  const bgmLabel = document.querySelector(".sound-label-bgm");
+  const seLabel = document.querySelector(".sound-label-se");
+  if (bgmLabel) bgmLabel.textContent = Sound.enabled ? "BGM ON" : "BGM OFF";
+  if (seLabel) seLabel.textContent = Sound.enabled ? "SE ON" : "SE OFF";
 }
 
 /* ============================================================
@@ -335,8 +516,15 @@ let laserActive = false;
 let laserTimer = 0;
 let laserFireTimer = 0;
 let wideTimer = 0;
+let speedTimer = 0;
 let pierceTimer = 0;
 let stageClearing = false;   // ステージ切り替え中フラグ
+
+let boss = null;
+let bossBullets = [];
+let bossDefeating = false;
+let bossDefeatTimer = 0;
+let paddleInvincible = 0;
 
 const input = {
   left: false,
@@ -368,8 +556,11 @@ function initGame(startStage = 0) {
   laserActive = false;
   laserTimer = 0;
   wideTimer = 0;
+  speedTimer = 0;
   pierceTimer = 0;
   stageClearing = false;
+  clearBoss();
+  paddleInvincible = 0;
 
   paddle.baseWidth = CONFIG.paddleWidth;
   paddle.width = CONFIG.paddleWidth;
@@ -383,7 +574,9 @@ function initGame(startStage = 0) {
 
   balls = [createBall()];
   createBlocksForStage();
+  if (isBossStage()) createBoss();
   updateHUD();
+  updateChargeButtonUI();
 }
 
 function createBall(speedMult = 1) {
@@ -398,18 +591,104 @@ function createBall(speedMult = 1) {
     dy: -Math.sin(angle) * speed,
     radius: CONFIG.ballRadius,
     speed,
+    baseSpeed: speed,
+    boostActive: false,
+    charged: false,
+    chargeBreaksLeft: 0,
   };
+}
+
+function clearChargeBreakState(ball) {
+  ball.chargeBreaksLeft = 0;
+  ball.chargeInside = null;
+}
+
+function getBallSpeed(ball) {
+  const velocity = Math.hypot(ball.dx, ball.dy);
+  return Math.max(velocity, ball.speed || 0);
+}
+
+function applyBallVelocity(ball, speed, angle) {
+  ball.dx = Math.sin(angle) * speed;
+  ball.dy = -Math.abs(Math.cos(angle) * speed);
+  ball.speed = speed;
+  updateBallChargeVisual(ball);
+}
+
+function updateBallChargeVisual(ball) {
+  const base = ball.baseSpeed || getStageConfig().ballSpeed;
+  ball.charged = ball.boostActive && ball.speed > base * 1.08;
+}
+
+// チャージ後の速度を徐々に通常へ戻す
+function decayBoostSpeed(ball, speed) {
+  const base = ball.baseSpeed || getStageConfig().ballSpeed;
+  if (!ball.boostActive) {
+    return Math.max(speed, base);
+  }
+  if (speed <= base * 1.03) {
+    ball.boostActive = false;
+    ball.charged = false;
+    clearChargeBreakState(ball);
+    return base;
+  }
+  const excess = speed - base;
+  const newSpeed = base + excess * CONFIG.chargeDecayPerPaddle;
+  if (newSpeed <= base * 1.03) {
+    ball.boostActive = false;
+    ball.charged = false;
+    clearChargeBreakState(ball);
+    return base;
+  }
+  return newSpeed;
+}
+
+function applySpeedToBall(ball, speed) {
+  const current = getBallSpeed(ball);
+  if (current < 0.001) return;
+  const scale = speed / current;
+  ball.dx *= scale;
+  ball.dy *= scale;
+  ball.speed = speed;
+  updateBallChargeVisual(ball);
+}
+
+function updateBallBoostDecay(ball) {
+  if (!ball.boostActive) return;
+  const base = ball.baseSpeed || getStageConfig().ballSpeed;
+  let speed = getBallSpeed(ball);
+  if (speed <= base * 1.03) {
+    ball.boostActive = false;
+    ball.charged = false;
+    clearChargeBreakState(ball);
+    return;
+  }
+  const excess = speed - base;
+  const newSpeed = base + excess * CONFIG.chargeDecayPerFrame;
+  if (newSpeed <= base * 1.03) {
+    ball.boostActive = false;
+    ball.charged = false;
+    clearChargeBreakState(ball);
+    applySpeedToBall(ball, base);
+  } else {
+    applySpeedToBall(ball, newSpeed);
+  }
 }
 
 function createBlocksForStage() {
   blocks = [];
   const stage = getStageConfig();
   const cols = stage.cols;
-  const rows = stage.rows;
+  let rows = stage.rows;
   const layout = stage.layout || "full";
+  if (isBossStage()) {
+    const bossCfg = getBossConfig(getBossTier());
+    rows = Math.min(rows, bossCfg.blockRowsMax);
+  }
   const blockHeight = rows > 10 ? 16 : CONFIG.blockHeight;
   const blockWidth =
     (canvas.width - CONFIG.blockOffsetLeft * 2 - CONFIG.blockPadding * (cols - 1)) / cols;
+  const yOffset = isBossStage() ? CONFIG.bossBlockOffsetY : 0;
 
   for (let row = 0; row < rows; row++) {
     for (let col = 0; col < cols; col++) {
@@ -417,7 +696,7 @@ function createBlocksForStage() {
       const hp = getBlockHp(row, col);
       blocks.push({
         x: CONFIG.blockOffsetLeft + col * (blockWidth + CONFIG.blockPadding),
-        y: CONFIG.blockOffsetTop + row * (blockHeight + CONFIG.blockPadding),
+        y: CONFIG.blockOffsetTop + yOffset + row * (blockHeight + CONFIG.blockPadding),
         width: blockWidth,
         height: blockHeight,
         hp,
@@ -485,12 +764,17 @@ function showComboPopup(n) {
    7. アイテム
    ============================================================ */
 
+function pickItemType() {
+  if (Math.random() < CONFIG.laserDropChance) return "LASER";
+  const types = Object.keys(ITEM_TYPES).filter((t) => t !== "LASER");
+  return types[Math.floor(Math.random() * types.length)];
+}
+
 function tryDropItem(x, y) {
   const stage = getStageConfig();
   if (Math.random() > stage.dropRate) return;
 
-  const types = Object.keys(ITEM_TYPES);
-  const type = types[Math.floor(Math.random() * types.length)];
+  const type = pickItemType();
   items.push({
     x: x - CONFIG.itemSize / 2,
     y,
@@ -515,6 +799,9 @@ function collectItem(item) {
     case "WIDE":
       activateWide();
       break;
+    case "SPEED":
+      activateSpeed();
+      break;
     case "PIERCE":
       activatePierce();
       break;
@@ -534,6 +821,10 @@ function multiplyBalls() {
         dy: -Math.abs(Math.sin(angle) * ball.speed),
         radius: ball.radius,
         speed: ball.speed,
+        baseSpeed: ball.baseSpeed || ball.speed,
+        boostActive: false,
+        charged: false,
+        chargeBreaksLeft: 0,
       });
     }
   });
@@ -543,6 +834,7 @@ function multiplyBalls() {
 function activateLaser() {
   laserActive = true;
   laserTimer = CONFIG.laserDuration;
+  laserFireTimer = 0;
 }
 
 function activateWide() {
@@ -551,6 +843,16 @@ function activateWide() {
   paddle.width = paddle.baseWidth * CONFIG.widePaddleScale;
   paddle.x = center - paddle.width / 2;
   clampPaddle();
+}
+
+function activateSpeed() {
+  speedTimer = CONFIG.speedBoostDuration;
+}
+
+function getPaddleSpeed() {
+  return speedTimer > 0
+    ? CONFIG.paddleSpeed * CONFIG.speedBoostMultiplier
+    : CONFIG.paddleSpeed;
 }
 
 function activatePierce() {
@@ -597,6 +899,370 @@ function updateParticles() {
 }
 
 /* ============================================================
+   8b. ボス戦
+   ============================================================ */
+
+function isBossStage(stage = currentStage) {
+  return BOSS_STAGES.includes(stage);
+}
+
+function clearBoss() {
+  boss = null;
+  bossBullets = [];
+  bossDefeating = false;
+  bossDefeatTimer = 0;
+}
+
+function createBoss() {
+  const cfg = getBossConfig(getBossTier());
+  const w = cfg.width;
+  const h = cfg.height;
+  boss = {
+    ...cfg,
+    x: canvas.width / 2 - w / 2,
+    y: 46,
+    width: w,
+    height: h,
+    maxHp: cfg.hp,
+    alive: true,
+    moveDir: 1,
+    shootTimer: cfg.shootInterval * 0.6,
+    hitFlash: 0,
+    pulse: 0,
+    angry: false,
+    ringPhase: 0,
+    laserCooldown: 0,
+  };
+  bossBullets = [];
+  bossDefeating = false;
+  bossDefeatTimer = 0;
+}
+
+function getBossDamage(ball) {
+  if (!boss) return 1;
+  if (!ball) return boss.ballDamage;
+  if (ball.chargeBreaksLeft > 0) return boss.chargeDamage;
+  if (ball.charged || ball.boostActive) return boss.chargeDamage;
+  return boss.ballDamage;
+}
+
+function damageBoss(damage, hitX, hitY) {
+  if (!boss || !boss.alive || bossDefeating) return;
+
+  boss.hp -= damage;
+  boss.hitFlash = 1;
+  Sound.bossHit();
+  spawnParticles(hitX, hitY, "#b967ff", 10);
+  spawnParticles(hitX, hitY, "#00f5ff", 6);
+  score += CONFIG.pointsPerBlock * 2 * getComboMultiplier();
+  addCombo();
+
+  if (boss.hp <= 0) startBossDefeat();
+}
+
+function startBossDefeat() {
+  if (!boss || bossDefeating) return;
+
+  boss.alive = false;
+  bossDefeating = true;
+  bossDefeatTimer = CONFIG.bossDefeatDelay;
+  bossBullets = [];
+  Sound.bossDefeat();
+  UI.stageClear.textContent = "BOSS DOWN!";
+  UI.stageClear.classList.remove("hidden");
+
+  const cx = boss.x + boss.width / 2;
+  const cy = boss.y + boss.height / 2;
+  const colors = ["#00f5ff", "#ff6ec7", "#b967ff", "#ffe066", "#50ffbb"];
+  colors.forEach((color, i) => {
+    setTimeout(() => spawnParticles(cx, cy, color, 22), i * 80);
+  });
+  spawnParticles(cx, cy, "#ffffff", 35);
+}
+
+function shootBossBullet() {
+  if (!boss || !boss.alive) return;
+
+  const cx = boss.x + boss.width / 2;
+  const cy = boss.y + boss.height;
+  const px = paddle.x + paddle.width / 2;
+  const py = paddle.y + paddle.height / 2;
+  const angle = Math.atan2(py - cy, px - cx);
+  const speed = boss.bulletSpeed * (boss.angry ? boss.angrySpeedMult : 1);
+
+  const addBullet = (a, downward = false) => {
+    const bulletAngle = downward ? Math.PI / 2 + (a - angle) * 0.15 : a;
+    bossBullets.push({
+      x: cx,
+      y: cy,
+      dx: Math.cos(bulletAngle) * speed,
+      dy: Math.sin(bulletAngle) * speed,
+      radius: boss.bulletRadius,
+      color: boss.angry ? "#ff6ec7" : boss.glowColor,
+    });
+  };
+
+  addBullet(angle);
+  if (boss.angry) {
+    const spread = 0.22 + boss.tier * 0.035;
+    for (let i = 1; i <= boss.angrySpread; i++) {
+      addBullet(angle - spread * i);
+      addBullet(angle + spread * i);
+    }
+    if (boss.tier >= 3) {
+      addBullet(angle, true);
+      addBullet(angle - 0.5, true);
+      addBullet(angle + 0.5, true);
+    }
+  }
+}
+
+function hurtPlayerFromBoss() {
+  if (paddleInvincible > 0) return;
+
+  paddleInvincible = CONFIG.paddleInvincibleTime;
+  lives--;
+  Sound.bossHurt();
+  spawnParticles(paddle.x + paddle.width / 2, paddle.y, "#ff3344", 16);
+  resetCombo();
+
+  if (lives <= 0) {
+    endGame("gameover");
+    return;
+  }
+
+  balls = [createBall()];
+}
+
+function updateBoss() {
+  if (!boss) return;
+
+  if (bossDefeating) {
+    bossDefeatTimer -= 16;
+    boss.pulse += 0.12;
+    boss.ringPhase += 0.18;
+    const cx = boss.x + boss.width / 2;
+    const cy = boss.y + boss.height / 2;
+    if (Math.random() < 0.28) {
+      spawnParticles(cx, cy, ["#00f5ff", "#ff6ec7", "#b967ff"][Math.floor(Math.random() * 3)], 4);
+    }
+    if (bossDefeatTimer <= 0) {
+      clearBoss();
+      UI.stageClear.classList.add("hidden");
+      UI.stageClear.textContent = "STAGE CLEAR!";
+      proceedStageClear();
+    }
+    return;
+  }
+
+  if (!boss.alive) return;
+
+  boss.x += boss.moveDir * boss.speed;
+  if (boss.x <= 10) {
+    boss.x = 10;
+    boss.moveDir = 1;
+  } else if (boss.x + boss.width >= canvas.width - 10) {
+    boss.x = canvas.width - 10 - boss.width;
+    boss.moveDir = -1;
+  }
+
+  boss.pulse += 0.07;
+  boss.ringPhase += 0.05;
+  if (boss.hitFlash > 0) boss.hitFlash -= 0.1;
+  if (boss.laserCooldown > 0) boss.laserCooldown -= 16;
+  boss.angry = boss.hp / boss.maxHp <= boss.angryThreshold;
+
+  boss.shootTimer -= 16;
+  if (boss.shootTimer <= 0) {
+    shootBossBullet();
+    boss.shootTimer = boss.shootInterval * (boss.angry ? boss.angryIntervalMult : 1);
+  }
+}
+
+function updateBossBullets() {
+  bossBullets = bossBullets.filter((bullet) => {
+    bullet.x += bullet.dx;
+    bullet.y += bullet.dy;
+
+    if (paddleInvincible <= 0 &&
+      circleRectCollision(bullet.x, bullet.y, bullet.radius, paddle.x, paddle.y, paddle.width, paddle.height)
+    ) {
+      hurtPlayerFromBoss();
+      return false;
+    }
+
+    for (const ball of balls) {
+      if (Math.hypot(bullet.x - ball.x, bullet.y - ball.y) < bullet.radius + ball.radius) {
+        spawnParticles(bullet.x, bullet.y, bullet.color, 5);
+        return false;
+      }
+    }
+
+    return bullet.y < canvas.height + 24 && bullet.x > -24 && bullet.x < canvas.width + 24;
+  });
+}
+
+function resolveBossBallCollision(ball) {
+  if (!boss || !boss.alive || bossDefeating) return;
+
+  if (!circleRectCollision(ball.x, ball.y, ball.radius, boss.x, boss.y, boss.width, boss.height)) return;
+
+  const damage = getBossDamage(ball);
+  damageBoss(damage, ball.x, ball.y);
+  reflectBallOffBlock(ball, boss);
+  separateBallFromBlock(ball, boss);
+}
+
+function drawBossHpBar() {
+  if (!boss || bossDefeating) return;
+
+  const barW = canvas.width - 36;
+  const barH = 9;
+  const x = 18;
+  const y = 26;
+  const ratio = Math.max(0, boss.hp / boss.maxHp);
+
+  ctx.save();
+  ctx.fillStyle = "rgba(0, 0, 0, 0.55)";
+  roundRect(ctx, x - 1, y - 1, barW + 2, barH + 2, 5);
+  ctx.fill();
+
+  const grad = ctx.createLinearGradient(x, y, x + barW, y);
+  grad.addColorStop(0, "#ff6ec7");
+  grad.addColorStop(0.5, "#b967ff");
+  grad.addColorStop(1, "#00f5ff");
+  ctx.shadowColor = "#b967ff";
+  ctx.shadowBlur = 14;
+  ctx.fillStyle = grad;
+  roundRect(ctx, x, y, barW * ratio, barH, 4);
+  ctx.fill();
+
+  ctx.shadowBlur = 0;
+  ctx.strokeStyle = "rgba(0, 245, 255, 0.6)";
+  ctx.lineWidth = 1;
+  roundRect(ctx, x, y, barW, barH, 4);
+  ctx.stroke();
+
+  ctx.font = "bold 9px sans-serif";
+  ctx.fillStyle = "rgba(255, 255, 255, 0.9)";
+  ctx.textAlign = "center";
+  ctx.textBaseline = "bottom";
+  ctx.fillText(`BOSS ${boss.name}  ${boss.hp} / ${boss.maxHp}`, canvas.width / 2, y - 3);
+  ctx.restore();
+}
+
+function drawBoss() {
+  if (!boss) return;
+
+  const { x, y, width: w, height: h } = boss;
+  const cx = x + w / 2;
+  const cy = y + h / 2;
+  const pulse = Math.sin(boss.pulse) * 0.12 + 1;
+  const flash = boss.hitFlash;
+  const angry = boss.angry;
+  const tier = boss.tier;
+  const glow = boss.glowColor;
+
+  ctx.save();
+
+  if (bossDefeating) {
+    const t = 1 - bossDefeatTimer / CONFIG.bossDefeatDelay;
+    ctx.globalAlpha = 1 - t * 0.85;
+    ctx.translate(cx, cy);
+    ctx.scale(1 + t * 0.8, 1 + t * 0.8);
+    ctx.rotate(t * 0.4);
+    ctx.translate(-cx, -cy);
+  }
+
+  // ネオンリング
+  const ringCount = 2 + tier;
+  for (let i = 0; i < ringCount; i++) {
+    const ringR = (w * 0.55 + i * 10) * pulse;
+    const alpha = Math.max(0.08, 0.3 - i * 0.07);
+    ctx.beginPath();
+    ctx.arc(cx, cy, ringR, 0, Math.PI * 2);
+    if (angry) {
+      ctx.strokeStyle = `rgba(255, 51, 68, ${alpha})`;
+    } else if (tier >= 2) {
+      ctx.strokeStyle = `rgba(255, 110, 199, ${alpha})`;
+    } else {
+      ctx.strokeStyle = `rgba(0, 245, 255, ${alpha})`;
+    }
+    ctx.lineWidth = 1.5 + tier * 0.2;
+    ctx.shadowColor = angry ? "#ff3344" : glow;
+    ctx.shadowBlur = 10 + tier * 2;
+    ctx.stroke();
+  }
+
+  ctx.shadowColor = angry ? "#ff3344" : flash > 0 ? "#ffffff" : glow;
+  ctx.shadowBlur = (18 + flash * 20) * pulse;
+
+  const bodyGrad = ctx.createLinearGradient(x, y, x, y + h);
+  bodyGrad.addColorStop(0, flash > 0 ? "#ffffff" : "#ffc0e0");
+  bodyGrad.addColorStop(0.4, angry ? "#ff4090" : "#b967ff");
+  bodyGrad.addColorStop(1, angry ? "#9e1858" : "#5a20a8");
+  ctx.fillStyle = bodyGrad;
+  roundRect(ctx, x, y, w, h, 12);
+  ctx.fill();
+
+  ctx.shadowBlur = 0;
+  ctx.strokeStyle = angry ? "#ff6ec7" : "#00f5ff";
+  ctx.lineWidth = 2;
+  roundRect(ctx, x + 1, y + 1, w - 2, h - 2, 11);
+  ctx.stroke();
+
+  // 目（ネオン）
+  const eyeY = y + h * 0.38;
+  ctx.fillStyle = "#00f5ff";
+  ctx.shadowColor = "#00f5ff";
+  ctx.shadowBlur = 10;
+  ctx.beginPath();
+  ctx.arc(x + w * 0.32, eyeY, 4.5, 0, Math.PI * 2);
+  ctx.arc(x + w * 0.68, eyeY, 4.5, 0, Math.PI * 2);
+  ctx.fill();
+
+  // 口
+  ctx.strokeStyle = angry ? "#ff3344" : "#ffe066";
+  ctx.lineWidth = 2;
+  ctx.beginPath();
+  if (angry) {
+    ctx.moveTo(x + w * 0.3, y + h * 0.72);
+    ctx.lineTo(x + w * 0.5, y + h * 0.62);
+    ctx.lineTo(x + w * 0.7, y + h * 0.72);
+  } else {
+    ctx.arc(cx, y + h * 0.68, w * 0.14, 0.1 * Math.PI, 0.9 * Math.PI);
+  }
+  ctx.stroke();
+
+  ctx.font = "bold 11px sans-serif";
+  ctx.fillStyle = "rgba(255, 255, 255, 0.85)";
+  ctx.textAlign = "center";
+  ctx.textBaseline = "middle";
+  ctx.shadowColor = "#ff6ec7";
+  ctx.shadowBlur = 8;
+  ctx.fillText(boss.name, cx, y + h * 0.55);
+
+  ctx.restore();
+}
+
+function drawBossBullets() {
+  bossBullets.forEach((bullet) => {
+    ctx.save();
+    ctx.shadowColor = bullet.color;
+    ctx.shadowBlur = 14;
+    const grad = ctx.createRadialGradient(bullet.x, bullet.y, 0, bullet.x, bullet.y, bullet.radius);
+    grad.addColorStop(0, "#ffffff");
+    grad.addColorStop(0.4, bullet.color);
+    grad.addColorStop(1, "rgba(0, 0, 0, 0)");
+    ctx.fillStyle = grad;
+    ctx.beginPath();
+    ctx.arc(bullet.x, bullet.y, bullet.radius, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.restore();
+  });
+}
+
+/* ============================================================
    9. 当たり判定ヘルパー
    ============================================================ */
 
@@ -610,9 +1276,9 @@ function clampPaddle() {
 
 function breakBlock(block, ball) {
   let damage = 1;
-  if (ball && ball.charged) {
+  if (ball && ball.charged && ball.chargeBreaksLeft <= 0) {
     damage = 2;
-    ball.charged = false;
+    ball.charged = ball.boostActive;
   }
   block.hp -= damage;
   if (block.hp <= 0) {
@@ -681,6 +1347,42 @@ function resolveBallBlockCollisions(ball) {
     return;
   }
 
+  // チャージショット: 最大2枚まで貫通して破壊（最後の1枚で跳ね返る）
+  if (ball.chargeBreaksLeft > 0) {
+    if (!ball.chargeInside) ball.chargeInside = new Set();
+
+    let hitBlock = null;
+    let minOverlap = Infinity;
+
+    blocks.forEach((block) => {
+      if (!block.alive) return;
+      const hit = circleRectCollision(ball.x, ball.y, ball.radius, block.x, block.y, block.width, block.height);
+      if (!hit) {
+        if (ball.chargeInside.has(block)) ball.chargeInside.delete(block);
+        return;
+      }
+      if (ball.chargeInside.has(block)) return;
+      const o = getBlockOverlaps(ball, block);
+      const overlap = Math.min(o.left, o.right, o.top, o.bottom);
+      if (overlap < minOverlap) {
+        minOverlap = overlap;
+        hitBlock = block;
+      }
+    });
+
+    if (!hitBlock) return;
+
+    ball.chargeInside.add(hitBlock);
+    breakBlock(hitBlock, ball);
+    ball.chargeBreaksLeft--;
+    if (ball.chargeBreaksLeft <= 0) {
+      reflectBallOffBlock(ball, hitBlock);
+      separateBallFromBlock(ball, hitBlock);
+      clearChargeBreakState(ball);
+    }
+    return;
+  }
+
   let hitBlock = null;
   let minOverlap = Infinity;
 
@@ -727,9 +1429,9 @@ function resolveBallPaddleCollision(ball) {
   ) {
     const hitPos = (ball.x - paddle.x) / paddle.width;
     const angle = (hitPos - 0.5) * Math.PI * 0.75;
-    let speed = Math.hypot(ball.dx, ball.dy) || ball.speed;
+    let speed = getBallSpeed(ball);
+    const baseSpeed = ball.baseSpeed || getStageConfig().ballSpeed;
 
-    // チャージ反映
     const ch = paddle.charge;
     if (ch > 0.08) {
       let mult = 1 + ch * CONFIG.chargeSpeedBoost;
@@ -740,19 +1442,25 @@ function resolveBallPaddleCollision(ball) {
       } else {
         Sound.paddleHit();
       }
-      speed = Math.min(speed * mult, CONFIG.maxBallSpeed);
+      speed = Math.min(Math.max(speed, baseSpeed) * mult, CONFIG.maxBallSpeed);
+      ball.baseSpeed = baseSpeed;
+      ball.boostActive = true;
       ball.charged = true;
+      ball.chargeBreaksLeft = CONFIG.chargeBreakCount;
+      ball.chargeInside = null;
       paddle.charge = 0;
       paddle.chargeReady = false;
       paddle.chargeReadyTimer = 0;
     } else {
       Sound.paddleHit();
-      ball.charged = false;
+      if (ball.boostActive) {
+        speed = decayBoostSpeed(ball, getBallSpeed(ball));
+      } else {
+        speed = Math.max(getBallSpeed(ball), baseSpeed);
+      }
     }
 
-    ball.dx = Math.sin(angle) * speed;
-    ball.dy = -Math.abs(Math.cos(angle) * speed);
-    ball.speed = speed;
+    applyBallVelocity(ball, speed, angle);
     ball.y = paddle.y - ball.radius;
     resetCombo();
   }
@@ -771,6 +1479,7 @@ function moveBall(ball) {
     resolveBallWallCollision(ball);
     resolveBallPaddleCollision(ball);
     resolveBallBlockCollisions(ball);
+    resolveBossBallCollision(ball);
   }
 }
 
@@ -805,6 +1514,31 @@ function updateCharge() {
   } else if (paddle.charge > 0) {
     paddle.charge = Math.max(0, paddle.charge - 0.006);
   }
+  updateChargeButtonUI();
+}
+
+function updateChargeButtonUI() {
+  const btn = document.getElementById("btn-charge");
+  if (!btn) return;
+  const label = btn.querySelector(".charge-label");
+  const sub = btn.querySelector(".charge-sub");
+
+  btn.classList.toggle("charging", input.charging);
+  btn.classList.toggle("ready", paddle.chargeReady);
+
+  if (paddle.chargeReady) {
+    label.textContent = "SHOT!";
+    sub.textContent = "今だ！";
+  } else if (input.charging) {
+    label.textContent = `${Math.round(paddle.charge * 100)}%`;
+    sub.textContent = "ため中…";
+  } else if (paddle.charge > 0.08) {
+    label.textContent = `${Math.round(paddle.charge * 100)}%`;
+    sub.textContent = "離して！";
+  } else {
+    label.textContent = "CHARGE";
+    sub.textContent = "長押し→離す";
+  }
 }
 
 /* ============================================================
@@ -812,11 +1546,19 @@ function updateCharge() {
    ============================================================ */
 
 function updatePaddle() {
+  const moveSpeed = getPaddleSpeed();
+
   if (input.touchX !== null) {
-    paddle.x = input.touchX - paddle.width / 2;
+    const targetX = input.touchX - paddle.width / 2;
+    const diff = targetX - paddle.x;
+    if (Math.abs(diff) <= moveSpeed) {
+      paddle.x = targetX;
+    } else {
+      paddle.x += Math.sign(diff) * moveSpeed;
+    }
   } else {
-    if (input.left)  paddle.x -= CONFIG.paddleSpeed;
-    if (input.right) paddle.x += CONFIG.paddleSpeed;
+    if (input.left)  paddle.x -= moveSpeed;
+    if (input.right) paddle.x += moveSpeed;
   }
   clampPaddle();
 
@@ -829,6 +1571,11 @@ function updatePaddle() {
       paddle.x = center - paddle.width / 2;
       clampPaddle();
     }
+  }
+
+  // 高速移動効果の終了
+  if (speedTimer > 0) {
+    speedTimer -= 16;
   }
 
   // 貫通効果の終了
@@ -849,6 +1596,7 @@ function updateBalls() {
   const toRemove = [];
 
   balls.forEach((ball, index) => {
+    updateBallBoostDecay(ball);
     moveBall(ball);
 
     if (ball.y - ball.radius > canvas.height) {
@@ -911,9 +1659,21 @@ function updateLasers() {
         laser.y < block.y + block.height &&
         laser.y + laser.height > block.y
       ) {
-        breakBlock(block, ball);
+        breakBlock(block, null);
       }
     });
+
+    if (boss && boss.alive && !bossDefeating && boss.laserCooldown <= 0) {
+      if (
+        laser.x < boss.x + boss.width &&
+        laser.x + laser.width > boss.x &&
+        laser.y < boss.y + boss.height &&
+        laser.y + laser.height > boss.y
+      ) {
+        damageBoss(1, laser.x + laser.width / 2, laser.y);
+        boss.laserCooldown = boss.laserHitCooldown;
+      }
+    }
 
     return laser.y + laser.height > 0;
   });
@@ -927,8 +1687,14 @@ function updateComboTimer() {
 }
 
 function checkStageClear() {
-  if (stageClearing) return;
+  if (stageClearing || bossDefeating) return;
+  if (isBossStage()) return;
   if (!blocks.every((b) => !b.alive)) return;
+  proceedStageClear();
+}
+
+function proceedStageClear() {
+  if (stageClearing) return;
 
   if (currentStage >= STAGES.length - 1) {
     Save.onStageClear(currentStage);
@@ -938,11 +1704,11 @@ function checkStageClear() {
 
   Save.onStageClear(currentStage);
 
-  // 次のステージへ（一時停止 → 演出 → 再開）
   stageClearing = true;
   gameState = "paused";
   Sound.stageClear();
   spawnParticles(canvas.width / 2, canvas.height / 2, "#00f5ff", 30);
+  UI.stageClear.textContent = "STAGE CLEAR!";
   UI.stageClear.classList.remove("hidden");
 
   setTimeout(() => {
@@ -951,22 +1717,29 @@ function checkStageClear() {
     lasers = [];
     laserActive = false;
     wideTimer = 0;
+    speedTimer = 0;
     pierceTimer = 0;
     paddle.width = paddle.baseWidth;
+    clearBoss();
     createBlocksForStage();
+    if (isBossStage()) createBoss();
     balls = [createBall()];
     resetCombo();
     updateHUD();
     UI.stageClear.classList.add("hidden");
     stageClearing = false;
     gameState = "playing";
-    gameLoop(); // ループを再開（paused中に止まるため必須）
+    gameLoop();
   }, CONFIG.stageClearDelay);
 }
 
 function update() {
+  if (paddleInvincible > 0) paddleInvincible -= 16;
+
   updatePaddle();
   updateBalls();
+  updateBoss();
+  updateBossBullets();
   updateItems();
   updateLasers();
   updateParticles();
@@ -995,14 +1768,24 @@ function roundRect(c, x, y, w, h, r) {
 
 function drawBackground() {
   const stageBg = getStageBg();
+  const bgImg = getStageBgImage();
 
   ctx.fillStyle = "#0d0020";
   ctx.fillRect(0, 0, canvas.width, canvas.height);
 
+  if (bgImg) {
+    ctx.save();
+    ctx.globalAlpha = 0.45;
+    drawCoverImage(bgImg);
+    ctx.restore();
+    ctx.fillStyle = "rgba(13, 0, 32, 0.48)";
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+  }
+
   ctx.fillStyle = stageBg.bgTint;
   ctx.fillRect(0, 0, canvas.width, canvas.height);
 
-  ctx.strokeStyle = "rgba(185, 103, 255, 0.06)";
+  ctx.strokeStyle = bgImg ? "rgba(185, 103, 255, 0.04)" : "rgba(185, 103, 255, 0.06)";
   ctx.lineWidth = 1;
   for (let x = 0; x < canvas.width; x += 20) {
     ctx.beginPath(); ctx.moveTo(x, 0); ctx.lineTo(x, canvas.height); ctx.stroke();
@@ -1015,7 +1798,8 @@ function drawBackground() {
   ctx.font = "bold 10px sans-serif";
   ctx.fillStyle = "rgba(0, 245, 255, 0.3)";
   ctx.textAlign = "center";
-  ctx.fillText(`STAGE ${currentStage + 1}  ${stageBg.name}`, canvas.width / 2, 17);
+  const stageLabelY = isBossStage() && boss ? 42 : 17;
+  ctx.fillText(`STAGE ${currentStage + 1}  ${stageBg.name}`, canvas.width / 2, stageLabelY);
   ctx.restore();
 }
 
@@ -1098,11 +1882,26 @@ function drawPaddle() {
   ctx.save();
   const isCharged = paddle.charge > 0.1;
   const isReady = paddle.chargeReady;
-  ctx.shadowColor = isReady ? "#00f5ff" : isCharged ? "#ffe066" : laserActive ? "#00f5ff" : "#ff6ec7";
-  ctx.shadowBlur = isReady ? 28 : isCharged ? 20 : laserActive ? 25 : 15;
+  const isFast = speedTimer > 0;
+  const invincibleBlink = paddleInvincible > 0 && Math.floor(paddleInvincible / 80) % 2 === 0;
+  if (invincibleBlink) ctx.globalAlpha = 0.45;
+  ctx.shadowColor = isReady ? "#00f5ff" : isCharged ? "#ffe066" : isFast ? "#50ffbb" : laserActive ? "#00f5ff" : "#ff6ec7";
+  ctx.shadowBlur = isReady ? 28 : isCharged ? 20 : isFast ? 22 : laserActive ? 25 : 15;
   ctx.fillStyle = grad;
   roundRect(ctx, paddle.x, paddle.y, paddle.width, paddle.height, 7);
   ctx.fill();
+
+  // 高速移動エフェクト（風のライン）
+  if (isFast) {
+    ctx.strokeStyle = "rgba(80, 255, 187, 0.5)";
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.moveTo(paddle.x + 4, paddle.y + paddle.height / 2);
+    ctx.lineTo(paddle.x - 10, paddle.y + paddle.height / 2);
+    ctx.moveTo(paddle.x + paddle.width - 4, paddle.y + paddle.height / 2);
+    ctx.lineTo(paddle.x + paddle.width + 10, paddle.y + paddle.height / 2);
+    ctx.stroke();
+  }
 
   // チャージゲージ
   if (paddle.charge > 0.02) {
@@ -1215,12 +2014,23 @@ function drawLives() {
 function draw() {
   drawBackground();
   drawBlocks();
+  drawBoss();
+  drawBossBullets();
+  drawBossHpBar();
   drawItems();
   drawLasers();
   drawPaddle();
   drawBalls();
   drawParticles();
   drawLives();
+
+  if (bossDefeating) {
+    const t = 1 - bossDefeatTimer / CONFIG.bossDefeatDelay;
+    ctx.save();
+    ctx.fillStyle = `rgba(0, 245, 255, ${t * 0.12})`;
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+    ctx.restore();
+  }
 }
 
 /* ============================================================
@@ -1244,6 +2054,8 @@ function startGame(startStage = selectedStartStage) {
 }
 
 function goToTitle() {
+  Save.recordHighScore(score);
+  Save.save(false);
   showScreen("title");
   gameState = "title";
   updateTitleScreen();
@@ -1257,12 +2069,16 @@ function updateTitleScreen() {
   const unlockedText = document.getElementById("unlocked-stage-text");
   const totalText = document.getElementById("total-stage-text");
   const continueBtn = document.getElementById("start-continue-btn");
+  const selectedStageEl = document.getElementById("title-selected-stage");
+  const highScoreEl = document.getElementById("title-high-score");
 
   if (!grid) return;
 
   grid.innerHTML = "";
   totalText.textContent = STAGES.length;
   unlockedText.textContent = Save.data.unlockedStage + 1;
+  if (selectedStageEl) selectedStageEl.textContent = selectedStartStage + 1;
+  if (highScoreEl) highScoreEl.textContent = Save.data.highScore || 0;
 
   for (let i = 0; i < STAGES.length; i++) {
     const btn = document.createElement("button");
@@ -1284,7 +2100,21 @@ function updateTitleScreen() {
     grid.appendChild(btn);
   }
 
-  continueBtn.disabled = Save.data.unlockedStage === 0;
+  if (continueBtn) continueBtn.disabled = Save.data.unlockedStage === 0;
+  Save.updateStatusUI();
+}
+
+function toggleStagePanel(show) {
+  const panel = document.getElementById("stage-panel");
+  if (!panel) return;
+  if (show === undefined) panel.classList.toggle("hidden");
+  else panel.classList.toggle("hidden", !show);
+}
+
+function manualSave() {
+  Save.recordHighScore(score);
+  Save.save(true);
+  if (gameState === "title") updateTitleScreen();
 }
 
 function endGame(result) {
@@ -1296,11 +2126,15 @@ function endGame(result) {
 
   if (result === "gameover") {
     Sound.gameOver();
+    Save.recordHighScore(score);
+    Save.save(false);
     UI.finalScoreOver.textContent = score;
     UI.finalStageOver.textContent = currentStage + 1;
     showScreen("gameover");
   } else if (result === "clear") {
     Sound.allClear();
+    Save.recordHighScore(score);
+    Save.save(false);
     UI.finalScoreClear.textContent = score;
     showScreen("clear");
   }
@@ -1334,48 +2168,52 @@ document.addEventListener("keyup", (e) => {
   }
 });
 
-// 左右ボタン（長押しでチャージも可能）
+// 左右ボタン
 function setupControlButton(btn, direction) {
-  let moveStarted = false;
-
   const press = (e) => {
     e.preventDefault();
-    moveStarted = false;
     input[direction] = true;
     input.touchX = null;
     btn.classList.add("pressed");
-    setTimeout(() => {
-      if (btn.classList.contains("pressed") && !moveStarted && gameState === "playing") {
-        startCharging();
-      }
-    }, 250);
   };
   const release = (e) => {
     e.preventDefault();
     input[direction] = false;
     btn.classList.remove("pressed");
-    if (input.charging) releaseCharge();
-  };
-  const move = (e) => {
-    e.preventDefault();
-    moveStarted = true;
-    if (input.charging) {
-      input.charging = false;
-      paddle.chargeReady = false;
-    }
   };
 
   btn.addEventListener("mousedown", press);
   btn.addEventListener("mouseup", release);
   btn.addEventListener("mouseleave", release);
   btn.addEventListener("touchstart", press, { passive: false });
-  btn.addEventListener("touchmove", move, { passive: false });
+  btn.addEventListener("touchend", release);
+  btn.addEventListener("touchcancel", release);
+}
+
+// チャージボタン
+function setupChargeButton(btn) {
+  const press = (e) => {
+    e.preventDefault();
+    btn.classList.add("pressed");
+    startCharging();
+  };
+  const release = (e) => {
+    e.preventDefault();
+    btn.classList.remove("pressed");
+    releaseCharge();
+  };
+
+  btn.addEventListener("mousedown", press);
+  btn.addEventListener("mouseup", release);
+  btn.addEventListener("mouseleave", release);
+  btn.addEventListener("touchstart", press, { passive: false });
   btn.addEventListener("touchend", release);
   btn.addEventListener("touchcancel", release);
 }
 
 setupControlButton(document.getElementById("btn-left"), "left");
 setupControlButton(document.getElementById("btn-right"), "right");
+setupChargeButton(document.getElementById("btn-charge"));
 
 // キャンバス：タッチ / スワイプでパドル移動
 function canvasToGameX(clientX) {
@@ -1387,73 +2225,42 @@ function canvasToGameX(clientX) {
 canvas.addEventListener("touchstart", (e) => {
   if (gameState !== "playing") return;
   e.preventDefault();
-  input.touchStartX = e.touches[0].clientX;
-  input.touchMode = null;
+  input.touchX = canvasToGameX(e.touches[0].clientX);
 }, { passive: false });
 
 canvas.addEventListener("touchmove", (e) => {
   if (gameState !== "playing") return;
   e.preventDefault();
-  const touchX = e.touches[0].clientX;
-  const moved = Math.abs(touchX - input.touchStartX);
-
-  if (moved > 14) {
-    input.touchMode = "move";
-    input.charging = false;
-    input.touchX = canvasToGameX(touchX);
-  } else if (input.touchMode !== "move") {
-    input.touchMode = "charge";
-    input.touchX = null;
-    startCharging();
-  }
+  input.touchX = canvasToGameX(e.touches[0].clientX);
 }, { passive: false });
 
 canvas.addEventListener("touchend", () => {
-  if (input.touchMode === "charge") releaseCharge();
   input.touchX = null;
-  input.touchMode = null;
 });
 
 canvas.addEventListener("touchcancel", () => {
-  if (input.charging) releaseCharge();
   input.touchX = null;
-  input.touchMode = null;
 });
 
-// マウス：ドラッグで移動、静止長押しでチャージ
+// マウス：ドラッグでパドル移動
 let mouseDown = false;
-let mouseStartX = 0;
 
 canvas.addEventListener("mousedown", (e) => {
   if (gameState !== "playing") return;
   mouseDown = true;
-  mouseStartX = e.clientX;
-  input.touchMode = null;
 });
 
 canvas.addEventListener("mousemove", (e) => {
   if (gameState !== "playing" || !mouseDown) return;
-  const moved = Math.abs(e.clientX - mouseStartX);
-  if (moved > 10) {
-    input.touchMode = "move";
-    input.charging = false;
-    input.touchX = canvasToGameX(e.clientX);
-  } else if (input.touchMode !== "move") {
-    input.touchMode = "charge";
-    input.touchX = null;
-    startCharging();
-  }
+  input.touchX = canvasToGameX(e.clientX);
 });
 
 canvas.addEventListener("mouseup", () => {
-  if (input.touchMode === "charge") releaseCharge();
   mouseDown = false;
   input.touchX = null;
-  input.touchMode = null;
 });
 
 canvas.addEventListener("mouseleave", () => {
-  if (input.charging) releaseCharge();
   mouseDown = false;
   input.touchX = null;
 });
@@ -1468,10 +2275,16 @@ document.getElementById("start-continue-btn").addEventListener("click", () => {
   selectedStartStage = Save.data.unlockedStage;
   startGame(Save.data.unlockedStage);
 });
+document.getElementById("stage-toggle-btn")?.addEventListener("click", () => toggleStagePanel());
+document.getElementById("stage-panel-close")?.addEventListener("click", () => toggleStagePanel(false));
 document.getElementById("retry-btn-over").addEventListener("click", () => startGame(currentStage));
 document.getElementById("retry-btn-clear").addEventListener("click", () => startGame(0));
 document.getElementById("title-btn-over").addEventListener("click", goToTitle);
 document.getElementById("title-btn-clear").addEventListener("click", goToTitle);
+
+document.getElementById("save-btn").addEventListener("click", manualSave);
+document.getElementById("save-btn-over").addEventListener("click", manualSave);
+document.getElementById("save-btn-clear").addEventListener("click", manualSave);
 
 document.querySelectorAll(".sound-toggle").forEach((btn) => {
   btn.addEventListener("click", () => Sound.toggle());
@@ -1482,6 +2295,13 @@ document.querySelectorAll(".sound-toggle").forEach((btn) => {
    ============================================================ */
 
 setupPromo();
+preloadStageBgImages();
 updateSoundButtons();
 Save.load();
 updateTitleScreen();
+
+// ページを閉じる前に自動セーブ
+window.addEventListener("pagehide", () => {
+  Save.recordHighScore(score);
+  Save.save(false);
+});
