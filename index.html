@@ -1,0 +1,107 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <title>みうのブロック崩し</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <div class="game-wrapper">
+
+    <!-- ===== タイトル画面 ===== -->
+    <div id="title-screen" class="screen active">
+      <div class="neon-box">
+        <p class="subtitle">AIアイドル</p>
+        <h1 class="title">みうの<br>ブロック崩し</h1>
+        <p class="hint">ステージを選んでスタート</p>
+
+        <div class="stage-select-area">
+          <p class="stage-select-label">解放ステージ <span id="unlocked-stage-text">1</span> / <span id="total-stage-text">20</span></p>
+          <div id="stage-select-grid" class="stage-grid"></div>
+        </div>
+
+        <button id="start-btn" class="neon-btn">スタート</button>
+        <button id="start-begin-btn" class="neon-btn secondary">はじめから（ステージ1）</button>
+        <button id="start-continue-btn" class="neon-btn secondary">解放ステージから</button>
+        <button id="sound-btn-title" class="sound-toggle" aria-label="サウンド切替">🔊 ON</button>
+      </div>
+    </div>
+
+    <!-- ===== ゲーム画面 ===== -->
+    <div id="game-screen" class="screen">
+      <div class="hud">
+        <div class="hud-item">
+          <span class="hud-label">STAGE</span>
+          <span id="stage-num" class="hud-value small">1</span>
+        </div>
+        <div class="hud-item">
+          <span class="hud-label">SCORE</span>
+          <span id="score" class="hud-value">0</span>
+        </div>
+        <div class="hud-item">
+          <span class="hud-label">COMBO</span>
+          <span id="combo" class="hud-value combo">×1</span>
+        </div>
+        <button id="sound-btn-game" class="sound-toggle mini" aria-label="サウンド切替">🔊</button>
+      </div>
+
+      <div class="canvas-area">
+        <canvas id="game-canvas" width="360" height="480"></canvas>
+        <div id="stage-clear-msg" class="overlay-msg hidden">STAGE CLEAR!</div>
+        <div id="combo-popup" class="combo-popup hidden"></div>
+      </div>
+
+      <div class="mobile-controls">
+        <button id="btn-left" class="control-btn" aria-label="左に移動">
+          <span class="btn-icon">◀</span>
+        </button>
+        <button id="btn-right" class="control-btn" aria-label="右に移動">
+          <span class="btn-icon">▶</span>
+        </button>
+      </div>
+      <p class="control-hint">スワイプで移動 / 長押しでチャージ → ボールが来たら離す！</p>
+    </div>
+
+    <!-- ===== ゲームオーバー画面 ===== -->
+    <div id="gameover-screen" class="screen">
+      <div class="neon-box">
+        <h2 class="result-title gameover">GAME OVER</h2>
+        <p class="result-score">SCORE: <span id="final-score-over">0</span></p>
+        <p class="result-sub">STAGE <span id="final-stage-over">1</span></p>
+        <button id="retry-btn-over" class="neon-btn">リトライ</button>
+        <button id="title-btn-over" class="neon-btn secondary">タイトルへ</button>
+      </div>
+    </div>
+
+    <!-- ===== 全ステージクリア画面（みう宣伝） ===== -->
+    <div id="clear-screen" class="screen">
+      <div class="neon-box promo-box">
+        <h2 class="result-title clear">ALL CLEAR!</h2>
+        <p class="clear-message">みう、全部壊しちゃった♪</p>
+        <p class="result-score">SCORE: <span id="final-score-clear">0</span></p>
+
+        <!-- みう宣伝エリア（画像・曲リンクはここを差し替え） -->
+        <div class="miu-promo">
+          <div class="miu-avatar" id="miu-avatar">
+            <!-- 画像がある場合: <img src="assets/miu.png" alt="みう"> -->
+            <span class="miu-initial">みう</span>
+          </div>
+          <p class="promo-name">AIアイドル みう</p>
+          <p class="promo-text">新曲チェックしてね♪</p>
+          <a id="miu-song-link" class="promo-link" href="https://example.com/miu-song" target="_blank" rel="noopener">
+            🎵 みうの曲を聴く
+          </a>
+        </div>
+
+        <button id="retry-btn-clear" class="neon-btn">もう一度</button>
+        <button id="title-btn-clear" class="neon-btn secondary">タイトルへ</button>
+      </div>
+    </div>
+
+  </div>
+
+  <script src="game.js"></script>
+</body>
+</html>
