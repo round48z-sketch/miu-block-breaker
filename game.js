@@ -494,6 +494,7 @@ function showScreen(name) {
    3. サウンド（Web Audio API + BGM）
    ============================================================ */
 
+const BGM_TITLE = "tital.mp3";
 const BGM_TRACKS = ["song1.mp3", "song2.mp3", "song3.mp3"];
 
 const BGM = {
@@ -501,6 +502,7 @@ const BGM = {
   volume: 0.42,
   audio: null,
   currentTrack: null,
+  mode: null,
   pendingPlay: false,
 
   pickTrack(excludeTrack = null) {
@@ -522,7 +524,7 @@ const BGM = {
       });
   },
 
-  playTrack(trackPath) {
+  playTrack(trackPath, { loop = false, mode = "game" } = {}) {
     if (!this.enabled) return;
     if (this.audio) {
       this.audio.pause();
@@ -531,22 +533,25 @@ const BGM = {
     }
 
     const audio = new Audio(trackPath);
-    audio.loop = false;
+    audio.loop = loop;
     audio.volume = this.volume;
     audio.preload = "auto";
     this.audio = audio;
     this.currentTrack = trackPath;
+    this.mode = mode;
     this.pendingPlay = false;
 
     audio.addEventListener("canplaythrough", () => this.tryPlay(audio), { once: true });
     audio.addEventListener("ended", () => {
-      if (this.audio !== audio || !this.enabled || gameState !== "playing") return;
+      if (this.audio !== audio || !this.enabled || this.mode !== "game") return;
+      if (gameState !== "playing") return;
       this.playNext();
     });
     audio.addEventListener("error", () => {
       if (this.audio === audio) {
         this.audio = null;
         this.currentTrack = null;
+        this.mode = null;
         this.pendingPlay = false;
       }
     });
@@ -554,10 +559,16 @@ const BGM = {
     this.tryPlay(audio);
   },
 
+  playTitle() {
+    if (!this.enabled) return;
+    this.stop();
+    this.playTrack(BGM_TITLE, { loop: true, mode: "title" });
+  },
+
   playRandom() {
     if (!this.enabled) return;
     this.stop();
-    this.playTrack(this.pickTrack());
+    this.playTrack(this.pickTrack(), { loop: false, mode: "game" });
   },
 
   playNext() {
@@ -566,9 +577,14 @@ const BGM = {
   },
 
   tryResumePending() {
-    if (!this.pendingPlay || !this.enabled || gameState !== "playing") return;
-    if (this.audio) this.tryPlay(this.audio);
-    else this.playRandom();
+    if (!this.pendingPlay || !this.enabled) return;
+    if (gameState === "playing") {
+      if (this.audio && this.mode === "game") this.tryPlay(this.audio);
+      else this.playRandom();
+    } else if (gameState === "title") {
+      if (this.audio && this.mode === "title") this.tryPlay(this.audio);
+      else this.playTitle();
+    }
   },
 
   stop() {
@@ -577,6 +593,7 @@ const BGM = {
     this.audio.src = "";
     this.audio = null;
     this.currentTrack = null;
+    this.mode = null;
   },
 
   pause() {
@@ -592,8 +609,11 @@ const BGM = {
     this.enabled = !this.enabled;
     if (this.enabled) {
       if (gameState === "playing") {
-        if (this.audio) this.resume();
+        if (this.audio && this.mode === "game") this.resume();
         else this.playRandom();
+      } else if (gameState === "title") {
+        if (this.audio && this.mode === "title") this.resume();
+        else this.playTitle();
       }
     } else {
       this.pause();
@@ -2424,7 +2444,6 @@ function startGame(startStage = selectedStartStage) {
 }
 
 function goToTitle() {
-  BGM.stop();
   if (animationId) {
     cancelAnimationFrame(animationId);
     animationId = null;
@@ -2434,6 +2453,7 @@ function goToTitle() {
   showScreen("title");
   gameState = "title";
   updateTitleScreen();
+  BGM.playTitle();
 }
 
 function updateTitleScreen() {
@@ -2677,6 +2697,12 @@ preloadStageBgImages();
 updateSoundButtons();
 Save.load();
 updateTitleScreen();
+BGM.playTitle();
+
+document.getElementById("title-screen")?.addEventListener("pointerdown", () => {
+  Sound.init();
+  BGM.tryResumePending();
+});
 
 // ページを閉じる前に自動セーブ
 window.addEventListener("pagehide", () => {
