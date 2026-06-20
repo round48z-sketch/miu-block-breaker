@@ -500,10 +500,15 @@ const BGM = {
   enabled: true,
   volume: 0.42,
   audio: null,
+  currentTrack: null,
   pendingPlay: false,
 
-  pickTrack() {
-    return BGM_TRACKS[Math.floor(Math.random() * BGM_TRACKS.length)];
+  pickTrack(excludeTrack = null) {
+    const candidates = excludeTrack
+      ? BGM_TRACKS.filter((track) => track !== excludeTrack)
+      : BGM_TRACKS;
+    const pool = candidates.length > 0 ? candidates : BGM_TRACKS;
+    return pool[Math.floor(Math.random() * pool.length)];
   },
 
   tryPlay(audio) {
@@ -517,25 +522,47 @@ const BGM = {
       });
   },
 
-  playRandom() {
+  playTrack(trackPath) {
     if (!this.enabled) return;
-    this.stop();
-    const audio = new Audio(this.pickTrack());
-    audio.loop = true;
+    if (this.audio) {
+      this.audio.pause();
+      this.audio.src = "";
+      this.audio = null;
+    }
+
+    const audio = new Audio(trackPath);
+    audio.loop = false;
     audio.volume = this.volume;
     audio.preload = "auto";
     this.audio = audio;
+    this.currentTrack = trackPath;
     this.pendingPlay = false;
 
     audio.addEventListener("canplaythrough", () => this.tryPlay(audio), { once: true });
+    audio.addEventListener("ended", () => {
+      if (this.audio !== audio || !this.enabled || gameState !== "playing") return;
+      this.playNext();
+    });
     audio.addEventListener("error", () => {
       if (this.audio === audio) {
         this.audio = null;
+        this.currentTrack = null;
         this.pendingPlay = false;
       }
     });
     audio.load();
     this.tryPlay(audio);
+  },
+
+  playRandom() {
+    if (!this.enabled) return;
+    this.stop();
+    this.playTrack(this.pickTrack());
+  },
+
+  playNext() {
+    if (!this.enabled || gameState !== "playing") return;
+    this.playTrack(this.pickTrack(this.currentTrack));
   },
 
   tryResumePending() {
@@ -549,6 +576,7 @@ const BGM = {
     this.audio.pause();
     this.audio.src = "";
     this.audio = null;
+    this.currentTrack = null;
   },
 
   pause() {
