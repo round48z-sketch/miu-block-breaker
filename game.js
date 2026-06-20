@@ -33,23 +33,66 @@ const CONFIG = {
   speedBoostMultiplier: 1.75,  // パドル移動速度アップ倍率
   speedBoostDuration: 10000,   // 持続時間(ms)
   pierceDuration: 8000,     // 貫通ボールの持続時間(ms)
+  barrierDuration: 10000,   // バリアの持続時間(ms)
+  bossItemDropBonus: 0.14,  // ボス戦のブロック落下率ボーナス
+  bossHitItemDropChance: 0.12, // ボス被弾時のアイテム落下率
   moveStep: 3,                // 1フレームの移動を分割（貫通防止）
   stageClearDelay: 1800,
   lives: 2,
+  extraLifeScore: 15000,     // このスコアごとに残機+1
+  maxLives: 99,
   // チャージ（長押しでパドルにためる）
   chargeMaxTime: 1400,       // 満タンまでのミリ秒
   chargeSpeedBoost: 1.6,     // 満タン時の速度倍率（+160%）
-  chargeReleaseBonus: 1.25,  // 離したタイミングで当てたボーナス
-  chargeReleaseWindow: 700,  // 離してから有効なミリ秒
   chargeDecayPerPaddle: 0.82, // 通常返し1回ごとに余剰速度が18%減
   chargeDecayPerFrame: 0.9992, // 飛行中もわずかに減衰（1=減衰なし）
-  chargeBreakCount: 2,       // チャージショットで貫通して壊せるブロック数
-  maxBallSpeed: 11,
+  chargeShotDuration: 10000,   // チャージショット効果（色変化・貫通）の持続(ms)
+  maxBallSpeed: 12,
   // ボス戦
   bossDefeatDelay: 2400,
   bossBlockOffsetY: 54,
   paddleInvincibleTime: 1400,
 };
+
+// チャージ量ティア（色＝威力。貯め時間が長いほど上位）
+const CHARGE_SHOT_TIERS = [
+  {
+    threshold: 0,
+    damage: 2,
+    pierce: 2,
+    glow: "#50ffbb",
+    inner: "#ffffff",
+    mid: "#50ffbb",
+    outer: "#00f5ff",
+  },
+  {
+    threshold: 0.35,
+    damage: 3,
+    pierce: 3,
+    glow: "#ffe066",
+    inner: "#ffffff",
+    mid: "#ffe066",
+    outer: "#ffaa00",
+  },
+  {
+    threshold: 0.65,
+    damage: 3,
+    pierce: 4,
+    glow: "#ff8844",
+    inner: "#ffffff",
+    mid: "#ffaa44",
+    outer: "#ff4400",
+  },
+  {
+    threshold: 0.9,
+    damage: 4,
+    pierce: 5,
+    glow: "#b967ff",
+    inner: "#ffffff",
+    mid: "#ffe066",
+    outer: "#b967ff",
+  },
+];
 
 // ボス出現ステージ（1始まり）と段階別ステータス
 const BOSS_STAGE_NUMBERS = [5, 10, 15, 20, 24];
@@ -144,18 +187,29 @@ function shouldPlaceBlock(layout, row, col, rows, cols) {
   return fn(row, col, rows, cols, currentStage);
 }
 
+function getBossHpBonus(stage = currentStage) {
+  return BOSS_STAGES.filter((bossStage) => stage > bossStage).length;
+}
+
 function getBlockHp(row, col) {
-  if (currentStage < 3) return 1;
+  const stage = currentStage;
   let hp = 1;
-  if (currentStage >= 3 && row === 0 && col % 2 === 0) hp = 2;
-  if (currentStage >= 6 && row <= 1 && col % 3 === 0) hp = 2;
-  if (currentStage >= 9 && row === 0) hp = 2;
-  if (currentStage >= 12 && row <= 2 && col % 4 === 0) hp = 3;
-  if (currentStage >= 16 && row <= 1 && col % 2 === 1) hp = 3;
-  if (currentStage >= 19 && row <= 1) hp = Math.max(hp, 2);
-  if (currentStage >= 21 && row === 0) hp = Math.max(hp, 3);
-  if (currentStage >= 22 && row <= 2) hp = Math.max(hp, 2);
-  return hp;
+
+  if (stage >= 1 && row === 0 && col % 2 === 0) hp = 2;
+  if (stage >= 3 && row <= 1 && col % 3 === 0) hp = Math.max(hp, 2);
+  if (stage >= 5 && row === 0) hp = Math.max(hp, 2);
+  if (stage >= 8 && row <= 2 && col % 4 === 0) hp = Math.max(hp, 3);
+  if (stage >= 11 && row <= 1 && col % 2 === 1) hp = Math.max(hp, 3);
+  if (stage >= 14 && row <= 2) hp = Math.max(hp, 2);
+  if (stage >= 17 && row <= 1) hp = Math.max(hp, 3);
+  if (stage >= 19 && row === 0) hp = Math.max(hp, 4);
+  if (stage >= 21 && row <= 3) hp = Math.max(hp, 2);
+  if (stage >= 23 && row <= 2) hp = Math.max(hp, 3);
+
+  // ボス撃破ごとに以降ステージのブロック耐久 +1
+  hp += getBossHpBonus(stage);
+
+  return Math.min(hp, 7);
 }
 
 // ステージ別の背景（色は列ごとに決まる）
@@ -377,6 +431,7 @@ const ITEM_TYPES = {
   WIDE:   { label: "W", color: "#b967ff", glow: "#d4a0ff" },  // パドル拡大
   SPEED:  { label: "S", color: "#50ffbb", glow: "#a0ffd8" },  // パドル高速
   PIERCE: { label: "P", color: "#ff3344", glow: "#ff6b6b" },  // 貫通ボール
+  BARRIER:{ label: "B", color: "#88ccff", glow: "#00f5ff" },  // バリア（10秒）
 };
 
 // みう宣伝（ここを書き換えるとクリア画面が変わる）
@@ -384,6 +439,24 @@ const MIU_PROMO = {
   songUrl: "https://example.com/miu-song",  // 曲のURL
   imageUrl: "",                              // 画像パス（例: "assets/miu.png"）
 };
+
+const GAMEOVER_SONGS = [
+  {
+    name: "キラメキフィーバー",
+    image: "kirameki.jpg",
+    url: "https://open.spotify.com/intl-ja/track/6FwegiT1StQcQK4zSJEZ5X?si=bf958ea64e15473f",
+  },
+  {
+    name: "FIRE",
+    image: "fire.jpg",
+    url: "https://open.spotify.com/intl-ja/track/64ENDNvfw95DX9v45m1kKe?si=6731d586c6a94d7b",
+  },
+  {
+    name: "IZON",
+    image: "izon.jpg",
+    url: "https://open.spotify.com/intl-ja/track/0rQOKHqwbgZuwXjuewZ3M0?si=1cbba7946ae04669",
+  },
+];
 
 /* ============================================================
    2. DOM・画面
@@ -418,8 +491,88 @@ function showScreen(name) {
 }
 
 /* ============================================================
-   3. サウンド（Web Audio API・外部ファイル不要）
+   3. サウンド（Web Audio API + BGM）
    ============================================================ */
+
+const BGM_TRACKS = ["song1.mp3", "song2.mp3", "song3.mp3"];
+
+const BGM = {
+  enabled: true,
+  volume: 0.42,
+  audio: null,
+  pendingPlay: false,
+
+  pickTrack() {
+    return BGM_TRACKS[Math.floor(Math.random() * BGM_TRACKS.length)];
+  },
+
+  tryPlay(audio) {
+    if (this.audio !== audio || !this.enabled) return;
+    audio.play()
+      .then(() => {
+        this.pendingPlay = false;
+      })
+      .catch(() => {
+        this.pendingPlay = true;
+      });
+  },
+
+  playRandom() {
+    if (!this.enabled) return;
+    this.stop();
+    const audio = new Audio(this.pickTrack());
+    audio.loop = true;
+    audio.volume = this.volume;
+    audio.preload = "auto";
+    this.audio = audio;
+    this.pendingPlay = false;
+
+    audio.addEventListener("canplaythrough", () => this.tryPlay(audio), { once: true });
+    audio.addEventListener("error", () => {
+      if (this.audio === audio) {
+        this.audio = null;
+        this.pendingPlay = false;
+      }
+    });
+    audio.load();
+    this.tryPlay(audio);
+  },
+
+  tryResumePending() {
+    if (!this.pendingPlay || !this.enabled || gameState !== "playing") return;
+    if (this.audio) this.tryPlay(this.audio);
+    else this.playRandom();
+  },
+
+  stop() {
+    if (!this.audio) return;
+    this.audio.pause();
+    this.audio.src = "";
+    this.audio = null;
+  },
+
+  pause() {
+    if (this.audio && !this.audio.paused) this.audio.pause();
+  },
+
+  resume() {
+    if (!this.enabled || !this.audio) return;
+    this.tryPlay(this.audio);
+  },
+
+  toggle() {
+    this.enabled = !this.enabled;
+    if (this.enabled) {
+      if (gameState === "playing") {
+        if (this.audio) this.resume();
+        else this.playRandom();
+      }
+    } else {
+      this.pause();
+    }
+    updateSoundButtons();
+  },
+};
 
 const Sound = {
   enabled: true,
@@ -468,19 +621,20 @@ const Sound = {
 };
 
 function updateSoundButtons() {
-  const label = Sound.enabled ? "🔊 ON" : "🔇 OFF";
-  const mini  = Sound.enabled ? "🔊" : "🔇";
-  document.querySelectorAll(".sound-toggle").forEach((btn) => {
-    if (btn.classList.contains("mini")) {
-      btn.textContent = mini;
-    } else if (btn.id !== "sound-btn-title" && btn.id !== "sound-btn-title-se") {
-      btn.textContent = label;
-    }
+  const seMini = Sound.enabled ? "🔊" : "🔇";
+  document.querySelectorAll(".sound-toggle.mini").forEach((btn) => {
+    btn.textContent = seMini;
     btn.classList.toggle("off", !Sound.enabled);
   });
+
+  const bgmBtn = document.getElementById("sound-btn-title");
+  const seBtn = document.getElementById("sound-btn-title-se");
+  if (bgmBtn) bgmBtn.classList.toggle("off", !BGM.enabled);
+  if (seBtn) seBtn.classList.toggle("off", !Sound.enabled);
+
   const bgmLabel = document.querySelector(".sound-label-bgm");
   const seLabel = document.querySelector(".sound-label-se");
-  if (bgmLabel) bgmLabel.textContent = Sound.enabled ? "BGM ON" : "BGM OFF";
+  if (bgmLabel) bgmLabel.textContent = BGM.enabled ? "BGM ON" : "BGM OFF";
   if (seLabel) seLabel.textContent = Sound.enabled ? "SE ON" : "SE OFF";
 }
 
@@ -496,6 +650,7 @@ let score = 0;
 let combo = 0;
 let comboTimer = 0;
 let lives = CONFIG.lives;
+let nextExtraLifeScore = CONFIG.extraLifeScore;
 
 let paddle = {
   x: 0, y: 0,
@@ -503,8 +658,6 @@ let paddle = {
   height: CONFIG.paddleHeight,
   baseWidth: CONFIG.paddleWidth,
   charge: 0,
-  chargeReady: false,
-  chargeReadyTimer: 0,
 };
 let balls = [];
 let blocks = [];
@@ -518,6 +671,7 @@ let laserFireTimer = 0;
 let wideTimer = 0;
 let speedTimer = 0;
 let pierceTimer = 0;
+let barrierTimer = 0;
 let stageClearing = false;   // ステージ切り替え中フラグ
 
 let boss = null;
@@ -540,13 +694,20 @@ const input = {
    ============================================================ */
 
 function getStageConfig() {
-  return STAGES[Math.min(currentStage, STAGES.length - 1)];
+  const base = STAGES[Math.min(currentStage, STAGES.length - 1)];
+  const progress = currentStage / Math.max(1, STAGES.length - 1);
+  return {
+    ...base,
+    ballSpeed: Math.min(CONFIG.maxBallSpeed, base.ballSpeed + 0.35 + progress * 0.85),
+    dropRate: Math.max(0.12, base.dropRate - progress * 0.05),
+  };
 }
 
 function initGame(startStage = 0) {
   currentStage = Math.max(0, Math.min(startStage, STAGES.length - 1));
   score = 0;
   lives = CONFIG.lives;
+  nextExtraLifeScore = CONFIG.extraLifeScore;
 
   combo = 0;
   comboTimer = 0;
@@ -558,6 +719,7 @@ function initGame(startStage = 0) {
   wideTimer = 0;
   speedTimer = 0;
   pierceTimer = 0;
+  barrierTimer = 0;
   stageClearing = false;
   clearBoss();
   paddleInvincible = 0;
@@ -567,8 +729,6 @@ function initGame(startStage = 0) {
   paddle.x = (canvas.width - paddle.width) / 2;
   paddle.y = canvas.height - paddle.height - 16;
   paddle.charge = 0;
-  paddle.chargeReady = false;
-  paddle.chargeReadyTimer = 0;
   input.charging = false;
   input.touchMode = null;
 
@@ -595,12 +755,111 @@ function createBall(speedMult = 1) {
     boostActive: false,
     charged: false,
     chargeBreaksLeft: 0,
+    chargeShotTimer: 0,
+    chargeShotPower: 0,
+    chargeShotTier: null,
   };
+}
+
+function getChargeShotTier(power) {
+  const p = Math.max(0, Math.min(1, power));
+  let tier = CHARGE_SHOT_TIERS[0];
+  for (const candidate of CHARGE_SHOT_TIERS) {
+    if (p >= candidate.threshold) tier = candidate;
+  }
+  return tier;
+}
+
+function getChargeShotDamage(power) {
+  return getChargeShotTier(power).damage;
+}
+
+function getChargeShotPierce(power) {
+  return getChargeShotTier(power).pierce;
+}
+
+function getPaddleChargePower() {
+  return paddle.charge > 0.08 ? paddle.charge : 0;
+}
+
+function getBallChargeTier(ball) {
+  if (ball.chargeShotTimer > 0) {
+    return ball.chargeShotTier || getChargeShotTier(ball.chargeShotPower);
+  }
+  const paddlePower = getPaddleChargePower();
+  if (gameState === "playing" && paddlePower > 0) {
+    return getChargeShotTier(paddlePower);
+  }
+  return null;
+}
+
+function drawChargeTierBall(ball, tier, isActive = false) {
+  const pulse = isActive ? 0.6 + 0.4 * Math.sin(performance.now() / 130) : 1;
+  const drawRadius = isActive ? ball.radius + 1.5 : ball.radius;
+
+  if (isActive) {
+    ctx.save();
+    ctx.globalAlpha = 0.28 * pulse;
+    ctx.beginPath();
+    ctx.arc(ball.x, ball.y, drawRadius + 6, 0, Math.PI * 2);
+    ctx.fillStyle = tier.glow;
+    ctx.fill();
+    ctx.restore();
+
+    ctx.save();
+    ctx.globalAlpha = 0.55 + pulse * 0.25;
+    ctx.strokeStyle = tier.outer;
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.arc(ball.x, ball.y, drawRadius + 3, 0, Math.PI * 2);
+    ctx.stroke();
+    ctx.restore();
+  }
+
+  ctx.shadowColor = tier.glow;
+  ctx.shadowBlur = (isActive ? 30 : 18) + tier.damage * 4;
+  const grad = ctx.createRadialGradient(ball.x - 2, ball.y - 2, 1, ball.x, ball.y, drawRadius);
+  grad.addColorStop(0, tier.inner);
+  grad.addColorStop(0.35, tier.mid);
+  grad.addColorStop(1, tier.outer);
+  ctx.beginPath();
+  ctx.arc(ball.x, ball.y, drawRadius, 0, Math.PI * 2);
+  ctx.fillStyle = grad;
+  ctx.fill();
+}
+
+function activateChargeShot(ball, power) {
+  const clamped = Math.max(0, Math.min(1, power));
+  const tier = getChargeShotTier(clamped);
+  ball.chargeShotTimer = CONFIG.chargeShotDuration;
+  ball.chargeShotPower = clamped;
+  ball.chargeShotTier = tier;
+  ball.chargeBreaksLeft = tier.pierce;
+  ball.chargeInside = null;
+  ball.charged = true;
 }
 
 function clearChargeBreakState(ball) {
   ball.chargeBreaksLeft = 0;
   ball.chargeInside = null;
+}
+
+function clearChargeShotState(ball) {
+  ball.chargeShotTimer = 0;
+  ball.chargeShotPower = 0;
+  ball.chargeShotTier = null;
+  clearChargeBreakState(ball);
+  if (!ball.boostActive) ball.charged = false;
+}
+
+function getActiveChargeShotTier(ball) {
+  return ball.chargeShotTier || getChargeShotTier(ball.chargeShotPower);
+}
+
+function updateChargeShotTimer(ball) {
+  if (ball.chargeShotTimer <= 0) return;
+  ball.chargeShotTimer -= 16;
+  if (ball.chargeShotTimer <= 0) clearChargeShotState(ball);
 }
 
 function getBallSpeed(ball) {
@@ -616,6 +875,10 @@ function applyBallVelocity(ball, speed, angle) {
 }
 
 function updateBallChargeVisual(ball) {
+  if (ball.chargeShotTimer > 0) {
+    ball.charged = true;
+    return;
+  }
   const base = ball.baseSpeed || getStageConfig().ballSpeed;
   ball.charged = ball.boostActive && ball.speed > base * 1.08;
 }
@@ -628,7 +891,7 @@ function decayBoostSpeed(ball, speed) {
   }
   if (speed <= base * 1.03) {
     ball.boostActive = false;
-    ball.charged = false;
+    if (ball.chargeShotTimer <= 0) ball.charged = false;
     clearChargeBreakState(ball);
     return base;
   }
@@ -636,7 +899,7 @@ function decayBoostSpeed(ball, speed) {
   const newSpeed = base + excess * CONFIG.chargeDecayPerPaddle;
   if (newSpeed <= base * 1.03) {
     ball.boostActive = false;
-    ball.charged = false;
+    if (ball.chargeShotTimer <= 0) ball.charged = false;
     clearChargeBreakState(ball);
     return base;
   }
@@ -659,7 +922,7 @@ function updateBallBoostDecay(ball) {
   let speed = getBallSpeed(ball);
   if (speed <= base * 1.03) {
     ball.boostActive = false;
-    ball.charged = false;
+    if (ball.chargeShotTimer <= 0) ball.charged = false;
     clearChargeBreakState(ball);
     return;
   }
@@ -667,7 +930,7 @@ function updateBallBoostDecay(ball) {
   const newSpeed = base + excess * CONFIG.chargeDecayPerFrame;
   if (newSpeed <= base * 1.03) {
     ball.boostActive = false;
-    ball.charged = false;
+    if (ball.chargeShotTimer <= 0) ball.charged = false;
     clearChargeBreakState(ball);
     applySpeedToBall(ball, base);
   } else {
@@ -715,11 +978,50 @@ function updateHUD() {
   UI.stageNum.textContent = currentStage + 1;
 }
 
+function addScore(points) {
+  if (points <= 0) return;
+  score += points;
+  while (score >= nextExtraLifeScore && lives < CONFIG.maxLives) {
+    lives++;
+    nextExtraLifeScore += CONFIG.extraLifeScore;
+    grantExtraLife();
+  }
+}
+
+function grantExtraLife() {
+  Sound.itemGet();
+  spawnParticles(canvas.width / 2, canvas.height - 36, "#ffe066", 22);
+  spawnParticles(canvas.width / 2, canvas.height - 36, "#00f5ff", 14);
+  showExtraLifePopup();
+}
+
+function showExtraLifePopup() {
+  UI.comboPopup.textContent = "1UP!";
+  UI.comboPopup.classList.remove("hidden");
+  UI.comboPopup.style.animation = "none";
+  void UI.comboPopup.offsetWidth;
+  UI.comboPopup.style.animation = "";
+  setTimeout(() => UI.comboPopup.classList.add("hidden"), 900);
+}
+
 function setupPromo() {
   UI.miuSongLink.href = MIU_PROMO.songUrl;
   if (MIU_PROMO.imageUrl) {
     UI.miuAvatar.innerHTML = `<img src="${MIU_PROMO.imageUrl}" alt="みう">`;
   }
+}
+
+function updateGameOverPromo() {
+  const song = GAMEOVER_SONGS[Math.floor(Math.random() * GAMEOVER_SONGS.length)];
+  const img = document.getElementById("gameover-song-img");
+  const name = document.getElementById("gameover-song-name");
+  const link = document.getElementById("gameover-spotify-btn");
+  if (img) {
+    img.src = song.image;
+    img.alt = song.name;
+  }
+  if (name) name.textContent = song.name;
+  if (link) link.href = song.url;
 }
 
 /* ============================================================
@@ -765,16 +1067,19 @@ function showComboPopup(n) {
    ============================================================ */
 
 function pickItemType() {
+  if (isBossStage()) {
+    const roll = Math.random();
+    if (roll < 0.24) return "BARRIER";
+    if (roll < 0.32) return "LASER";
+    const types = ["MULTI", "WIDE", "SPEED", "PIERCE"];
+    return types[Math.floor(Math.random() * types.length)];
+  }
   if (Math.random() < CONFIG.laserDropChance) return "LASER";
-  const types = Object.keys(ITEM_TYPES).filter((t) => t !== "LASER");
+  const types = Object.keys(ITEM_TYPES).filter((t) => t !== "LASER" && t !== "BARRIER");
   return types[Math.floor(Math.random() * types.length)];
 }
 
-function tryDropItem(x, y) {
-  const stage = getStageConfig();
-  if (Math.random() > stage.dropRate) return;
-
-  const type = pickItemType();
+function spawnItem(x, y, type = pickItemType()) {
   items.push({
     x: x - CONFIG.itemSize / 2,
     y,
@@ -783,6 +1088,19 @@ function tryDropItem(x, y) {
     type,
     vy: CONFIG.itemFallSpeed,
   });
+}
+
+function tryDropItem(x, y) {
+  const stage = getStageConfig();
+  let rate = stage.dropRate;
+  if (isBossStage()) rate = Math.min(0.38, rate + CONFIG.bossItemDropBonus);
+  if (Math.random() > rate) return;
+  spawnItem(x, y);
+}
+
+function tryDropBossHitItem(x, y) {
+  if (!isBossStage() || Math.random() > CONFIG.bossHitItemDropChance) return;
+  spawnItem(x, y, pickItemType());
 }
 
 function collectItem(item) {
@@ -805,6 +1123,9 @@ function collectItem(item) {
     case "PIERCE":
       activatePierce();
       break;
+    case "BARRIER":
+      activateBarrier();
+      break;
   }
 }
 
@@ -825,6 +1146,9 @@ function multiplyBalls() {
         boostActive: false,
         charged: false,
         chargeBreaksLeft: 0,
+        chargeShotTimer: 0,
+        chargeShotPower: 0,
+        chargeShotTier: null,
       });
     }
   });
@@ -860,6 +1184,12 @@ function activatePierce() {
   balls.forEach((ball) => {
     ball.pierceInside = new Set();
   });
+}
+
+function activateBarrier() {
+  barrierTimer = CONFIG.barrierDuration;
+  paddleInvincible = Math.max(paddleInvincible, 300);
+  spawnParticles(paddle.x + paddle.width / 2, paddle.y, "#00f5ff", 18);
 }
 
 function fireLaser() {
@@ -941,7 +1271,9 @@ function createBoss() {
 function getBossDamage(ball) {
   if (!boss) return 1;
   if (!ball) return boss.ballDamage;
-  if (ball.chargeBreaksLeft > 0) return boss.chargeDamage;
+  if (ball.chargeShotTimer > 0) {
+    return Math.max(boss.chargeDamage, getActiveChargeShotTier(ball).damage);
+  }
   if (ball.charged || ball.boostActive) return boss.chargeDamage;
   return boss.ballDamage;
 }
@@ -954,10 +1286,11 @@ function damageBoss(damage, hitX, hitY) {
   Sound.bossHit();
   spawnParticles(hitX, hitY, "#b967ff", 10);
   spawnParticles(hitX, hitY, "#00f5ff", 6);
-  score += CONFIG.pointsPerBlock * 2 * getComboMultiplier();
+  addScore(CONFIG.pointsPerBlock * 2 * getComboMultiplier());
   addCombo();
 
   if (boss.hp <= 0) startBossDefeat();
+  else tryDropBossHitItem(hitX, hitY);
 }
 
 function startBossDefeat() {
@@ -1018,7 +1351,7 @@ function shootBossBullet() {
 }
 
 function hurtPlayerFromBoss() {
-  if (paddleInvincible > 0) return;
+  if (barrierTimer > 0 || paddleInvincible > 0) return;
 
   paddleInvincible = CONFIG.paddleInvincibleTime;
   lives--;
@@ -1084,7 +1417,8 @@ function updateBossBullets() {
     bullet.x += bullet.dx;
     bullet.y += bullet.dy;
 
-    if (paddleInvincible <= 0 &&
+    if (barrierTimer <= 0 &&
+      paddleInvincible <= 0 &&
       circleRectCollision(bullet.x, bullet.y, bullet.radius, paddle.x, paddle.y, paddle.width, paddle.height)
     ) {
       hurtPlayerFromBoss();
@@ -1276,15 +1610,14 @@ function clampPaddle() {
 
 function breakBlock(block, ball) {
   let damage = 1;
-  if (ball && ball.charged && ball.chargeBreaksLeft <= 0) {
-    damage = 2;
-    ball.charged = ball.boostActive;
+  if (ball && ball.chargeShotTimer > 0) {
+    damage = getActiveChargeShotTier(ball).damage;
   }
   block.hp -= damage;
   if (block.hp <= 0) {
     block.alive = false;
     const mult = getComboMultiplier();
-    score += CONFIG.pointsPerBlock * mult;
+    addScore(CONFIG.pointsPerBlock * mult);
     addCombo();
     Sound.blockBreak();
     spawnParticles(
@@ -1347,7 +1680,14 @@ function resolveBallBlockCollisions(ball) {
     return;
   }
 
-  // チャージショット: 最大2枚まで貫通して破壊（最後の1枚で跳ね返る）
+  // チャージショット: 貫通して破壊（威力に応じて枚数変化、10秒間有効）
+  if (ball.chargeShotTimer > 0) {
+    if (ball.chargeBreaksLeft <= 0) {
+      ball.chargeBreaksLeft = getActiveChargeShotTier(ball).pierce;
+      ball.chargeInside = null;
+    }
+  }
+
   if (ball.chargeBreaksLeft > 0) {
     if (!ball.chargeInside) ball.chargeInside = new Set();
 
@@ -1378,7 +1718,12 @@ function resolveBallBlockCollisions(ball) {
     if (ball.chargeBreaksLeft <= 0) {
       reflectBallOffBlock(ball, hitBlock);
       separateBallFromBlock(ball, hitBlock);
-      clearChargeBreakState(ball);
+      if (ball.chargeShotTimer > 0) {
+        ball.chargeBreaksLeft = getActiveChargeShotTier(ball).pierce;
+        ball.chargeInside = null;
+      } else {
+        clearChargeBreakState(ball);
+      }
     }
     return;
   }
@@ -1434,23 +1779,14 @@ function resolveBallPaddleCollision(ball) {
 
     const ch = paddle.charge;
     if (ch > 0.08) {
-      let mult = 1 + ch * CONFIG.chargeSpeedBoost;
-      if (paddle.chargeReady) {
-        mult *= CONFIG.chargeReleaseBonus;
-        Sound.chargeHit();
-        spawnParticles(ball.x, ball.y, "#00f5ff", 14);
-      } else {
-        Sound.paddleHit();
-      }
+      const mult = 1 + ch * CONFIG.chargeSpeedBoost;
       speed = Math.min(Math.max(speed, baseSpeed) * mult, CONFIG.maxBallSpeed);
       ball.baseSpeed = baseSpeed;
       ball.boostActive = true;
-      ball.charged = true;
-      ball.chargeBreaksLeft = CONFIG.chargeBreakCount;
-      ball.chargeInside = null;
+      activateChargeShot(ball, ch);
+      Sound.chargeHit();
+      spawnParticles(ball.x, ball.y, getChargeShotTier(ch).glow, 14);
       paddle.charge = 0;
-      paddle.chargeReady = false;
-      paddle.chargeReadyTimer = 0;
     } else {
       Sound.paddleHit();
       if (ball.boostActive) {
@@ -1494,23 +1830,11 @@ function startCharging() {
 
 function releaseCharge() {
   input.charging = false;
-  if (paddle.charge > 0.06) {
-    paddle.chargeReady = true;
-    paddle.chargeReadyTimer = CONFIG.chargeReleaseWindow;
-  }
 }
 
 function updateCharge() {
   if (input.charging) {
     paddle.charge = Math.min(1, paddle.charge + 16 / CONFIG.chargeMaxTime);
-    paddle.chargeReady = false;
-    paddle.chargeReadyTimer = 0;
-  } else if (paddle.chargeReadyTimer > 0) {
-    paddle.chargeReadyTimer -= 16;
-    if (paddle.chargeReadyTimer <= 0) {
-      paddle.chargeReady = false;
-      paddle.charge *= 0.25;
-    }
   } else if (paddle.charge > 0) {
     paddle.charge = Math.max(0, paddle.charge - 0.006);
   }
@@ -1524,20 +1848,14 @@ function updateChargeButtonUI() {
   const sub = btn.querySelector(".charge-sub");
 
   btn.classList.toggle("charging", input.charging);
-  btn.classList.toggle("ready", paddle.chargeReady);
+  btn.classList.toggle("ready", paddle.charge >= 0.9);
 
-  if (paddle.chargeReady) {
-    label.textContent = "SHOT!";
-    sub.textContent = "今だ！";
-  } else if (input.charging) {
+  if (input.charging || paddle.charge > 0.08) {
     label.textContent = `${Math.round(paddle.charge * 100)}%`;
-    sub.textContent = "ため中…";
-  } else if (paddle.charge > 0.08) {
-    label.textContent = `${Math.round(paddle.charge * 100)}%`;
-    sub.textContent = "離して！";
+    sub.textContent = input.charging ? "ため中…" : "メーター保持中";
   } else {
     label.textContent = "CHARGE";
-    sub.textContent = "長押し→離す";
+    sub.textContent = "長押しでためる";
   }
 }
 
@@ -1596,6 +1914,7 @@ function updateBalls() {
   const toRemove = [];
 
   balls.forEach((ball, index) => {
+    updateChargeShotTimer(ball);
     updateBallBoostDecay(ball);
     moveBall(ball);
 
@@ -1719,6 +2038,7 @@ function proceedStageClear() {
     wideTimer = 0;
     speedTimer = 0;
     pierceTimer = 0;
+    barrierTimer = 0;
     paddle.width = paddle.baseWidth;
     clearBoss();
     createBlocksForStage();
@@ -1734,8 +2054,10 @@ function proceedStageClear() {
 }
 
 function update() {
+  if (barrierTimer > 0) barrierTimer -= 16;
   if (paddleInvincible > 0) paddleInvincible -= 16;
 
+  BGM.tryResumePending();
   updatePaddle();
   updateBalls();
   updateBoss();
@@ -1880,13 +2202,15 @@ function drawPaddle() {
   grad.addColorStop(1, "#00f5ff");
 
   ctx.save();
-  const isCharged = paddle.charge > 0.1;
-  const isReady = paddle.chargeReady;
+  const chargePower = getPaddleChargePower();
+  const chargeTier = chargePower > 0 ? getChargeShotTier(chargePower) : null;
+  const isCharged = chargePower > 0;
   const isFast = speedTimer > 0;
-  const invincibleBlink = paddleInvincible > 0 && Math.floor(paddleInvincible / 80) % 2 === 0;
+  const hasBarrier = barrierTimer > 0;
+  const invincibleBlink = !hasBarrier && paddleInvincible > 0 && Math.floor(paddleInvincible / 80) % 2 === 0;
   if (invincibleBlink) ctx.globalAlpha = 0.45;
-  ctx.shadowColor = isReady ? "#00f5ff" : isCharged ? "#ffe066" : isFast ? "#50ffbb" : laserActive ? "#00f5ff" : "#ff6ec7";
-  ctx.shadowBlur = isReady ? 28 : isCharged ? 20 : isFast ? 22 : laserActive ? 25 : 15;
+  ctx.shadowColor = hasBarrier ? "#00f5ff" : chargeTier ? chargeTier.glow : isFast ? "#50ffbb" : laserActive ? "#00f5ff" : "#ff6ec7";
+  ctx.shadowBlur = hasBarrier ? 30 : chargeTier ? 20 + chargeTier.damage * 2 : isFast ? 22 : laserActive ? 25 : 15;
   ctx.fillStyle = grad;
   roundRect(ctx, paddle.x, paddle.y, paddle.width, paddle.height, 7);
   ctx.fill();
@@ -1909,10 +2233,10 @@ function drawPaddle() {
     ctx.fillStyle = "rgba(0, 0, 0, 0.4)";
     roundRect(ctx, paddle.x, barY, paddle.width, 4, 2);
     ctx.fill();
-    const barColor = isReady ? "#00f5ff" : `rgba(255, ${Math.floor(110 + paddle.charge * 140)}, 100, 1)`;
+    const barColor = chargeTier ? chargeTier.glow : `rgba(255, ${Math.floor(110 + paddle.charge * 140)}, 100, 1)`;
     ctx.fillStyle = barColor;
     ctx.shadowColor = barColor;
-    ctx.shadowBlur = isReady ? 12 : 8;
+    ctx.shadowBlur = chargeTier ? 12 : 8;
     roundRect(ctx, paddle.x, barY, paddle.width * paddle.charge, 4, 2);
     ctx.fill();
   }
@@ -1922,25 +2246,42 @@ function drawPaddle() {
     ctx.shadowBlur = 10;
     ctx.fillRect(paddle.x + paddle.width / 2 - 2, paddle.y - 4, 4, 4);
   }
+
+  if (hasBarrier) {
+    const pulse = 0.55 + 0.35 * Math.sin(performance.now() / 120);
+    const cx = paddle.x + paddle.width / 2;
+    const cy = paddle.y + paddle.height / 2;
+    ctx.strokeStyle = `rgba(0, 245, 255, ${pulse})`;
+    ctx.fillStyle = `rgba(0, 245, 255, ${0.08 + pulse * 0.08})`;
+    ctx.lineWidth = 2.5;
+    ctx.beginPath();
+    ctx.ellipse(cx, cy, paddle.width / 2 + 10, paddle.height / 2 + 12, 0, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.stroke();
+  }
   ctx.restore();
 }
 
 function drawBalls() {
   balls.forEach((ball) => {
-    const isPierce = pierceTimer > 0;
-    const isCharged = ball.charged && !isPierce;
+    const isChargeShot = ball.chargeShotTimer > 0;
+    const chargeTier = getBallChargeTier(ball);
+    const isPierce = pierceTimer > 0 && !isChargeShot;
+
     ctx.save();
-    ctx.shadowColor = isPierce ? "#ff3344" : isCharged ? "#ffe066" : "#00f5ff";
-    ctx.shadowBlur = isCharged ? 24 : isPierce ? 22 : 18;
+    if (chargeTier) {
+      drawChargeTierBall(ball, chargeTier, isChargeShot);
+      ctx.restore();
+      return;
+    }
+
+    ctx.shadowColor = isPierce ? "#ff3344" : "#00f5ff";
+    ctx.shadowBlur = isPierce ? 22 : 18;
     const grad = ctx.createRadialGradient(ball.x - 2, ball.y - 2, 1, ball.x, ball.y, ball.radius);
     if (isPierce) {
       grad.addColorStop(0, "#ffffff");
       grad.addColorStop(0.4, "#ff6b6b");
       grad.addColorStop(1, "#ff1a1a");
-    } else if (isCharged) {
-      grad.addColorStop(0, "#ffffff");
-      grad.addColorStop(0.4, "#ffe066");
-      grad.addColorStop(1, "#ff6ec7");
     } else {
       grad.addColorStop(0, "#ffffff");
       grad.addColorStop(0.5, "#00f5ff");
@@ -2046,6 +2387,7 @@ function gameLoop() {
 
 function startGame(startStage = selectedStartStage) {
   Sound.init();
+  BGM.playRandom();
   if (animationId) cancelAnimationFrame(animationId);
   initGame(startStage);
   showScreen("game");
@@ -2054,6 +2396,11 @@ function startGame(startStage = selectedStartStage) {
 }
 
 function goToTitle() {
+  BGM.stop();
+  if (animationId) {
+    cancelAnimationFrame(animationId);
+    animationId = null;
+  }
   Save.recordHighScore(score);
   Save.save(false);
   showScreen("title");
@@ -2119,6 +2466,7 @@ function manualSave() {
 
 function endGame(result) {
   gameState = result;
+  BGM.stop();
   if (animationId) {
     cancelAnimationFrame(animationId);
     animationId = null;
@@ -2130,6 +2478,7 @@ function endGame(result) {
     Save.save(false);
     UI.finalScoreOver.textContent = score;
     UI.finalStageOver.textContent = currentStage + 1;
+    updateGameOverPromo();
     showScreen("gameover");
   } else if (result === "clear") {
     Sound.allClear();
@@ -2286,9 +2635,10 @@ document.getElementById("save-btn").addEventListener("click", manualSave);
 document.getElementById("save-btn-over").addEventListener("click", manualSave);
 document.getElementById("save-btn-clear").addEventListener("click", manualSave);
 
-document.querySelectorAll(".sound-toggle").forEach((btn) => {
-  btn.addEventListener("click", () => Sound.toggle());
-});
+document.getElementById("sound-btn-title")?.addEventListener("click", () => BGM.toggle());
+document.getElementById("sound-btn-title-se")?.addEventListener("click", () => Sound.toggle());
+document.getElementById("title-btn-game")?.addEventListener("click", goToTitle);
+document.getElementById("sound-btn-game")?.addEventListener("click", () => Sound.toggle());
 
 /* ============================================================
    15. 起動

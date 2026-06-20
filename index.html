@@ -4,8 +4,8 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
   <meta name="apple-mobile-web-app-capable" content="yes">
-  <title>みうのブロック崩し</title>
-  <link rel="stylesheet" href="style.css">
+  <title>MIU BREAKER</title>
+  <link rel="stylesheet" href="style.css?v=go2">
 </head>
 <body>
   <div class="game-wrapper">
@@ -13,16 +13,16 @@
     <!-- ===== タイトル画面 ===== -->
     <div id="title-screen" class="screen active">
       <div class="title-layout">
-        <img src="tital.png" alt="みうのブロック崩し" class="title-bg-img">
+        <img src="tital.png" alt="MIU BREAKER" class="title-bg-img">
 
         <div class="title-overlay">
           <header class="title-header">
-            <p class="title-header-sub">みうの</p>
-            <h1 class="title-header-main" aria-label="みうのブロック崩し">
-              <span class="title-header-line">ブロック</span>
-              <span class="title-header-line">崩し</span>
+            <p class="title-header-sub"></p>
+            <h1 class="title-header-main" aria-label="MIU BREAKER">
+              <span class="title-header-line">MIU</span>
+              <span class="title-header-line">BREAKER</span>
             </h1>
-            <p class="title-header-en"><span class="title-heart">♥</span> MIU BLOCK BREAKER <span class="title-heart">♥</span></p>
+            <p class="title-header-en"><span class="title-heart">♥</span> MIU BREAKER <span class="title-heart">♥</span></p>
             <p class="title-header-tagline">☆ 弾いて！壊して！ハイスコアを目指そう！ ☆</p>
           </header>
 
@@ -92,6 +92,10 @@
           <span class="hud-label">COMBO</span>
           <span id="combo" class="hud-value combo">×1</span>
         </div>
+        <button id="title-btn-game" class="hud-btn title-back-btn" type="button" aria-label="タイトル画面に戻る">
+          <span class="title-back-icon">🏠</span>
+          <span class="title-back-label">タイトルへ</span>
+        </button>
         <button id="sound-btn-game" class="sound-toggle mini" aria-label="サウンド切替">🔊</button>
       </div>
 
@@ -118,13 +122,27 @@
 
     <!-- ===== ゲームオーバー画面 ===== -->
     <div id="gameover-screen" class="screen">
-      <div class="neon-box">
-        <h2 class="result-title gameover">GAME OVER</h2>
-        <p class="result-score">SCORE: <span id="final-score-over">0</span></p>
-        <p class="result-sub">STAGE <span id="final-stage-over">1</span></p>
-        <button id="retry-btn-over" class="neon-btn">リトライ</button>
-        <button id="save-btn-over" class="neon-btn secondary">💾 セーブ</button>
-        <button id="title-btn-over" class="neon-btn secondary">タイトルへ</button>
+      <div class="gameover-card">
+        <p class="gameover-card-title">GAME OVER</p>
+        <p class="gameover-card-score">SCORE <span id="final-score-over">0</span></p>
+        <p class="visually-hidden">STAGE <span id="final-stage-over">1</span></p>
+
+        <div class="gameover-promo-card">
+          <div class="gameover-jacket-wrap">
+            <img id="gameover-song-img" class="gameover-jacket-img" src="izon.jpg" alt="みうの曲" width="88" height="88">
+          </div>
+          <p class="gameover-promo-label">AIみうの曲を聴く</p>
+          <p id="gameover-song-name" class="gameover-promo-song">IZON</p>
+          <p class="gameover-promo-sub">Spotifyでフル再生</p>
+          <a id="gameover-spotify-btn" class="gameover-spotify-btn" href="https://open.spotify.com/intl-ja/track/0rQOKHqwbgZuwXjuewZ3M0?si=1cbba7946ae04669" target="_blank" rel="noopener">OPEN SPOTIFY</a>
+        </div>
+
+        <div class="gameover-nav-card">
+          <button id="retry-btn-over" class="gameover-nav-btn" type="button">RETRY</button>
+          <button id="title-btn-over" class="gameover-nav-btn" type="button">HOME</button>
+        </div>
+
+        <button id="save-btn-over" class="gameover-save-btn" type="button">💾 セーブ</button>
       </div>
     </div>
 
@@ -156,6 +174,6 @@
 
   </div>
 
-  <script src="game.js"></script>
+  <script src="game.js?v=bgm2"></script>
 </body>
 </html>
