@@ -88,6 +88,71 @@ body::before {
     0 0 60px rgba(0, 245, 255, 0.1);
 }
 
+.title-tap-gate {
+  position: absolute;
+  inset: 0;
+  z-index: 20;
+  margin: 0;
+  padding: 0;
+  border: none;
+  background: rgba(8, 0, 18, 0.42);
+  color: #ffd3f4;
+  cursor: pointer;
+  touch-action: manipulation;
+}
+
+.title-tap-gate.hidden {
+  display: none;
+}
+
+.title-tap-gate-label {
+  position: absolute;
+  left: 50%;
+  bottom: clamp(5.5rem, 14vh, 7.5rem);
+  transform: translateX(-50%);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.45rem;
+  width: max-content;
+  max-width: calc(100% - 2rem);
+  pointer-events: none;
+}
+
+.title-tap-gate-text {
+  font-size: clamp(1.2rem, 6vw, 1.75rem);
+  font-weight: 800;
+  letter-spacing: 0.16em;
+  color: #ff6ec7;
+  text-shadow:
+    0 0 12px rgba(255, 45, 170, 0.95),
+    0 0 28px rgba(255, 45, 170, 0.55);
+  animation: title-tap-pulse 1.6s ease-in-out infinite;
+}
+
+.title-tap-gate-sub {
+  font-size: clamp(0.72rem, 3.2vw, 0.88rem);
+  letter-spacing: 0.2em;
+  color: rgba(255, 211, 244, 0.85);
+}
+
+@keyframes title-tap-pulse {
+  0%,
+  100% {
+    opacity: 0.72;
+    transform: scale(0.98);
+  }
+  50% {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+
+body.title-locked #title-screen .title-overlay {
+  visibility: hidden;
+  pointer-events: none;
+}
+
 .title-bg-img {
   position: absolute;
   inset: 0;

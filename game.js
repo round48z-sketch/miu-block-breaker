@@ -691,6 +691,7 @@ function updateSoundButtons() {
    ============================================================ */
 
 let gameState = "title";   // title | playing | paused | gameover | clear
+let titleReady = false;
 let animationId = null;
 
 let currentStage = 0;
@@ -2443,6 +2444,32 @@ function startGame(startStage = selectedStartStage) {
   gameLoop();
 }
 
+function unlockTitleScreen() {
+  if (titleReady) return;
+  titleReady = true;
+  document.body.classList.remove("title-locked");
+  document.getElementById("title-tap-gate")?.classList.add("hidden");
+  Sound.init();
+  BGM.playTitle();
+}
+
+function syncTitleGate() {
+  const tapGate = document.getElementById("title-tap-gate");
+  if (gameState !== "title") {
+    document.body.classList.remove("title-locked");
+    return;
+  }
+  if (titleReady) {
+    tapGate?.classList.add("hidden");
+    document.body.classList.remove("title-locked");
+    BGM.playTitle();
+  } else {
+    tapGate?.classList.remove("hidden");
+    document.body.classList.add("title-locked");
+    BGM.stop();
+  }
+}
+
 function goToTitle() {
   if (animationId) {
     cancelAnimationFrame(animationId);
@@ -2453,7 +2480,7 @@ function goToTitle() {
   showScreen("title");
   gameState = "title";
   updateTitleScreen();
-  BGM.playTitle();
+  syncTitleGate();
 }
 
 function updateTitleScreen() {
@@ -2548,6 +2575,7 @@ document.addEventListener("keydown", (e) => {
   if (e.code === "Space") {
     if (gameState === "title") {
       e.preventDefault();
+      if (!titleReady) return;
       startGame(selectedStartStage);
     } else if (gameState === "playing") {
       e.preventDefault();
@@ -2666,9 +2694,18 @@ canvas.addEventListener("mouseleave", () => {
    14. UIボタン
    ============================================================ */
 
-document.getElementById("start-btn").addEventListener("click", () => startGame(selectedStartStage));
-document.getElementById("start-begin-btn").addEventListener("click", () => startGame(0));
+document.getElementById("title-tap-gate")?.addEventListener("click", () => unlockTitleScreen());
+
+document.getElementById("start-btn").addEventListener("click", () => {
+  if (!titleReady) return;
+  startGame(selectedStartStage);
+});
+document.getElementById("start-begin-btn").addEventListener("click", () => {
+  if (!titleReady) return;
+  startGame(0);
+});
 document.getElementById("start-continue-btn").addEventListener("click", () => {
+  if (!titleReady) return;
   selectedStartStage = Save.data.unlockedStage;
   startGame(Save.data.unlockedStage);
 });
@@ -2697,12 +2734,8 @@ preloadStageBgImages();
 updateSoundButtons();
 Save.load();
 updateTitleScreen();
-BGM.playTitle();
-
-document.getElementById("title-screen")?.addEventListener("pointerdown", () => {
-  Sound.init();
-  BGM.tryResumePending();
-});
+document.body.classList.add("title-locked");
+syncTitleGate();
 
 // ページを閉じる前に自動セーブ
 window.addEventListener("pagehide", () => {
